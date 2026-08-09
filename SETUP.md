@@ -88,6 +88,12 @@ of a pull overwriting an edit the server had never been told about.
 **Per-row dirty flags.** Every table carries a `dirty` column. Only rows the user actually
 touched are uploaded, so a refresh on a large group is cheap.
 
+**The known tradeoff: clocks.** `updated_at` is stamped by the device that made the edit, and
+the pull watermark is the highest timestamp seen. If one phone's clock is badly wrong, its
+writes can sort incorrectly against another's. For a group of friends splitting dinner this
+is the right trade — it avoids a round trip for a server timestamp on every single write. If
+it ever matters, stamp `updated_at` inside `splits_push` from `now()` instead.
+
 **Deletes are tombstones.** Rows are marked `deleted` rather than removed, so other devices
 learn about a deletion on their next pull instead of silently keeping a ghost group.
 

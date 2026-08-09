@@ -88,9 +88,17 @@ fun GroupScreen(
     var showIdentityPicker by remember { mutableStateOf(false) }
 
     val current = detail
-    // The group can vanish underneath us when the admin deletes it.
+
+    // The group can vanish underneath us — the admin deletes it and a sync pull brings the
+    // tombstone down while this screen is open. `null` before the first emission is just the
+    // initial load, so only bail out once we have actually seen the group and then lost it.
+    var hasLoaded by remember(groupId) { mutableStateOf(false) }
     LaunchedEffect(current) {
-        // `null` before the first emission is normal, so only bail once we've seen data.
+        if (current != null) {
+            hasLoaded = true
+        } else if (hasLoaded) {
+            onGroupGone()
+        }
     }
 
     if (current == null) {
@@ -103,7 +111,6 @@ fun GroupScreen(
     val group = current.group
     val me = current.meIn(repository.deviceId)
     val summary = remember(current) { summarise(current.members, current.expenses) }
-    val isAdmin = current.isAdmin(repository.deviceId)
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
