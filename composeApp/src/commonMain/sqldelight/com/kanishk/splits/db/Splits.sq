@@ -213,6 +213,35 @@ DELETE FROM splitEntity WHERE expenseId IN (SELECT id FROM expenseEntity WHERE g
 -- this device has not managed to push yet must survive, or the server would never hear about
 -- it and the row would come back on the next pull.
 
+-- Total rows waiting to be uploaded. Drives automatic syncing after a write.
+countDirty:
+SELECT (SELECT COUNT(*) FROM groupEntity   WHERE dirty = 1)
+     + (SELECT COUNT(*) FROM memberEntity  WHERE dirty = 1)
+     + (SELECT COUNT(*) FROM expenseEntity WHERE dirty = 1) AS total;
+
+-- Everything this device holds for a group, used to reconcile against the server's live ids.
+selectExpenseIdsOfGroup:
+SELECT id FROM expenseEntity WHERE groupId = ? AND dirty = 0;
+
+selectMemberIdsOfGroup:
+SELECT id FROM memberEntity WHERE groupId = ? AND dirty = 0;
+
+hardDeleteExpense:
+DELETE FROM expenseEntity WHERE id = ?;
+
+hardDeleteMember:
+DELETE FROM memberEntity WHERE id = ?;
+
+-- Once a deletion has been pushed the local tombstone has done its job.
+purgeSyncedTombstones:
+DELETE FROM expenseEntity WHERE deleted = 1 AND dirty = 0;
+
+purgeSyncedMemberTombstones:
+DELETE FROM memberEntity WHERE deleted = 1 AND dirty = 0;
+
+purgeSyncedGroupTombstones:
+DELETE FROM groupEntity WHERE deleted = 1 AND dirty = 0;
+
 purgeDeletedExpenses:
 DELETE FROM expenseEntity WHERE deleted = 1 AND dirty = 0 AND updatedAt < ?;
 

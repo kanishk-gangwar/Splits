@@ -138,13 +138,36 @@ else
   bad "cleanup failed, remove group $GID by hand: $gone"
 fi
 
-# ------------------------------------------------------------------- purge --
+# ------------------------------------------------------------------ deletes --
 
 say ""
-say "Storage"
+say "Deletion"
+
+# The live-id lists are what make hard deletes safe, so their absence is a real failure.
+live=$(rpc splits_pull "{\"p_group_ids\":[\"$GID\"],\"p_since\":0}")
+if printf '%s' "$live" | grep -q 'live_group_ids'; then
+  ok "pull returns live id lists — devices can detect deletions by absence"
+else
+  bad "pull has no live_group_ids — re-run backend/supabase/schema.sql"
+fi
+
+# After the delete above, the group must be gone rather than flagged.
+if printf '%s' "$live" | grep -q "\"$GID\""; then
+  bad "the deleted group is still present on the server"
+else
+  ok "the deleted group is gone from the table, not left as a flagged row"
+fi
+
+gone_invite=$(rpc splits_resolve_invite "{\"p_invite_code\":\"$CODE\"}")
+if printf '%s' "$gone_invite" | grep -q '"found":[ ]*false'; then
+  ok "its invite code no longer resolves"
+else
+  bad "the invite code still resolves after deletion: $gone_invite"
+fi
+
 purge=$(rpc splits_purge_deleted '{"p_retention_days":30}')
 if printf '%s' "$purge" | grep -q '"ok":[ ]*true'; then
-  ok "splits_purge_deleted runs — tombstones are reclaimed after the retention window"
+  ok "splits_purge_deleted runs — sweeps up anything older versions left behind"
 elif printf '%s' "$purge" | grep -qi 'could not find\|does not exist\|PGRST202'; then
   bad "splits_purge_deleted is missing — re-run backend/supabase/schema.sql"
 else

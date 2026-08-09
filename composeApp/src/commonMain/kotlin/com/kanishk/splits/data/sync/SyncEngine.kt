@@ -8,9 +8,16 @@ import com.kanishk.splits.data.remote.SyncNotConfigured
 import com.kanishk.splits.data.showNotification
 import com.kanishk.splits.model.formatMinor
 import com.kanishk.splits.model.nowMillis
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -38,6 +45,12 @@ private const val SUMMARY_NOTIFICATION_ID = 1
 private const val TOMBSTONE_RETENTION_DAYS = 30
 private const val PURGE_INTERVAL_MILLIS = 24L * 60 * 60 * 1000
 private const val DAY_MILLIS = 24L * 60 * 60 * 1000
+
+/**
+ * How long to wait after an edit before uploading it. Long enough that adding three expenses in
+ * a row is one round trip rather than three, short enough that it feels immediate.
+ */
+private const val AUTO_SYNC_DEBOUNCE_MILLIS = 700L
 
 sealed interface JoinResult {
     data class Found(val groupId: String) : JoinResult
@@ -67,6 +80,27 @@ class SyncEngine(
     // Two pull-to-refresh gestures at once must not produce two interleaved syncs.
     private val gate = Mutex()
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    init {
+        // Watch for unsent work and upload it on its own. Without this a saved expense sat on
+        // the device until the user happened to pull down to refresh, which is not something
+        // anyone should have to know to do.
+        if (api.isConfigured) {
+            scope.launch {
+                repository.observeDirtyCount()
+                    .distinctUntilChanged()
+                    .collectLatest { pending ->
+                        if (pending <= 0) return@collectLatest
+                        // collectLatest cancels this delay if another edit lands first, so a
+                        // burst of changes debounces into a single sync.
+                        delay(AUTO_SYNC_DEBOUNCE_MILLIS)
+                        syncNow()
+                    }
+            }
+        }
+    }
+
     suspend fun syncNow(): SyncStatus = gate.withLock {
         if (!api.isConfigured) {
             _status.value = SyncStatus.Disabled
@@ -91,6 +125,9 @@ class SyncEngine(
                         snapshot = snapshot,
                         // Anything we just uploaded is our own work coming back.
                         ignoreExpenseIds = pending.expenses.map { it.id }.toSet(),
+                        // Needed to notice groups that have been deleted outright: they are
+                        // absent from the response rather than reported in it.
+                        requestedGroupIds = groupIds,
                     )
                     val watermark = repository.watermarkOf(snapshot)
                     if (watermark > since) repository.setLastPulledAt(watermark)

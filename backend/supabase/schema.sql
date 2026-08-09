@@ -89,12 +89,30 @@ declare
 begin
     if p_group_ids is null or array_length(p_group_ids, 1) is null then
         return jsonb_build_object(
+            'live_group_ids', '[]'::jsonb, 'live_member_ids', '[]'::jsonb,
+            'live_expense_ids', '[]'::jsonb,
             'groups', '[]'::jsonb, 'members', '[]'::jsonb,
             'expenses', '[]'::jsonb, 'shares', '[]'::jsonb
         );
     end if;
 
     select jsonb_build_object(
+        -- The complete set of ids that still exist, regardless of p_since. This is what makes
+        -- hard deletes safe: a device that has been offline compares its local rows against
+        -- these lists and drops anything missing. Absence *is* the deletion signal, so no
+        -- tombstone has to be kept around to carry it.
+        'live_group_ids', coalesce((
+            select jsonb_agg(g.id) from public.splits_groups g
+            where g.id = any(p_group_ids)
+        ), '[]'::jsonb),
+        'live_member_ids', coalesce((
+            select jsonb_agg(m.id) from public.splits_members m
+            where m.group_id = any(p_group_ids)
+        ), '[]'::jsonb),
+        'live_expense_ids', coalesce((
+            select jsonb_agg(e.id) from public.splits_expenses e
+            where e.group_id = any(p_group_ids)
+        ), '[]'::jsonb),
         'groups', coalesce((
             select jsonb_agg(to_jsonb(g)) from public.splits_groups g
             where g.id = any(p_group_ids) and g.updated_at > p_since
@@ -235,13 +253,31 @@ begin
         on conflict (expense_id, member_id) do update set
             share_minor = excluded.share_minor;
 
-        -- Shares of a deleted expense are dead weight immediately: they carry no information
-        -- another device needs, because the expense's own tombstone is what tells everyone to
-        -- drop it. Only the tombstone itself has to survive.
-        delete from public.splits_shares s
-        using public.splits_expenses e
-        where s.expense_id = e.id and e.deleted = true;
     end if;
+
+    -- Deletions are permanent. The upsert above has already applied last-write-wins, so any
+    -- row now sitting at deleted = true is one the client's delete legitimately won — and
+    -- pull's live-id lists are what tell every other device about it. Nothing has to linger.
+    delete from public.splits_expenses
+    where deleted = true
+      and id in (
+          select x->>'id'
+          from jsonb_array_elements(coalesce(p_payload->'expenses', '[]'::jsonb)) as x
+      );
+
+    delete from public.splits_members
+    where deleted = true
+      and id in (
+          select x->>'id'
+          from jsonb_array_elements(coalesce(p_payload->'members', '[]'::jsonb)) as x
+      );
+
+    delete from public.splits_groups
+    where deleted = true
+      and id in (
+          select x->>'id'
+          from jsonb_array_elements(coalesce(p_payload->'groups', '[]'::jsonb)) as x
+      );
 
     return jsonb_build_object('ok', true);
 end;
@@ -260,7 +296,6 @@ as $$
 declare
     admin_id     text;
     admin_device text;
-    stamp        bigint;
 begin
     select admin_member_id into admin_id
     from public.splits_groups where id = p_group_id;
@@ -276,17 +311,9 @@ begin
         return jsonb_build_object('ok', false, 'reason', 'not_admin');
     end if;
 
-    stamp := (extract(epoch from now()) * 1000)::bigint;
-
-    -- Tombstone rather than hard delete, so other devices learn about it on their next pull.
-    update public.splits_expenses set deleted = true, updated_at = stamp where group_id = p_group_id;
-    update public.splits_members  set deleted = true, updated_at = stamp where group_id = p_group_id;
-    update public.splits_groups   set deleted = true, updated_at = stamp where id = p_group_id;
-
-    -- The share rows carry no deletion signal of their own, so they can go straight away.
-    delete from public.splits_shares s
-    using public.splits_expenses e
-    where s.expense_id = e.id and e.group_id = p_group_id;
+    -- Gone for good. Members, expenses and shares cascade off the group row, and other
+    -- devices find out because the group id stops appearing in pull's live_group_ids.
+    delete from public.splits_groups where id = p_group_id;
 
     return jsonb_build_object('ok', true);
 end;
@@ -295,17 +322,15 @@ $$;
 
 -- ----------------------------------------------------------------------- purge --
 
--- Reclaims storage from soft-deleted rows.
+-- Sweeps up any soft-deleted rows.
 --
--- Tombstones cannot be removed the instant something is deleted. A device that has not synced
--- since before the deletion pulls `updated_at > its watermark`; if the row is simply gone,
--- nothing in that response tells it to drop its local copy, and the deleted expense lingers on
--- that phone forever. The tombstone *is* the message.
+-- Deletions are permanent from the moment they sync, so in normal operation this finds
+-- nothing. It exists to clear tombstones written by earlier versions of the app, and as a
+-- safety net for rows orphaned by a push that failed midway.
 --
--- So rows are kept for a retention window and only then hard-deleted. Thirty days is far longer
--- than any real gap between syncs for a group of friends. Shares are not subject to this: they
--- are removed as soon as their expense is deleted, because the expense's tombstone already
--- carries the signal.
+-- The retention argument is kept for compatibility with older clients and is ignored: there is
+-- no window to wait out any more, because pull's live-id lists carry the deletion signal
+-- instead of the tombstone.
 create or replace function public.splits_purge_deleted(p_retention_days integer default 30)
 returns jsonb
 language plpgsql
@@ -313,20 +338,11 @@ security definer
 set search_path = public
 as $$
 declare
-    cutoff          bigint;
     removed_shares  integer;
     removed_expense integer;
     removed_member  integer;
     removed_group   integer;
 begin
-    -- Clamp so a caller cannot purge tombstones nobody has seen yet.
-    if p_retention_days is null or p_retention_days < 7 then
-        p_retention_days := 7;
-    end if;
-
-    cutoff := ((extract(epoch from now()) - (p_retention_days * 86400)) * 1000)::bigint;
-
-    -- Orphans first: shares whose expense is already gone or tombstoned.
     with gone as (
         delete from public.splits_shares s
         using public.splits_expenses e
@@ -336,31 +352,24 @@ begin
     select count(*) into removed_shares from gone;
 
     with gone as (
-        delete from public.splits_expenses
-        where deleted = true and updated_at < cutoff
-        returning 1
+        delete from public.splits_expenses where deleted = true returning 1
     )
     select count(*) into removed_expense from gone;
 
     with gone as (
-        delete from public.splits_members
-        where deleted = true and updated_at < cutoff
-        returning 1
+        delete from public.splits_members where deleted = true returning 1
     )
     select count(*) into removed_member from gone;
 
-    -- Groups last: members and expenses cascade off them, and we want the child rows counted
-    -- on their own terms rather than disappearing silently.
+    -- Groups last: their children cascade, and counting them separately above keeps the
+    -- report honest about what was actually reclaimed.
     with gone as (
-        delete from public.splits_groups
-        where deleted = true and updated_at < cutoff
-        returning 1
+        delete from public.splits_groups where deleted = true returning 1
     )
     select count(*) into removed_group from gone;
 
     return jsonb_build_object(
         'ok', true,
-        'retention_days', p_retention_days,
         'shares', removed_shares,
         'expenses', removed_expense,
         'members', removed_member,

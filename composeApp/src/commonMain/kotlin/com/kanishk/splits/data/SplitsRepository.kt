@@ -2,6 +2,7 @@ package com.kanishk.splits.data
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
+import app.cash.sqldelight.coroutines.mapToOne
 import app.cash.sqldelight.coroutines.mapToOneOrNull
 import com.kanishk.splits.db.ExpenseEntity
 import com.kanishk.splits.db.GroupEntity
@@ -328,6 +329,13 @@ class SplitsRepository(
         queries.upsertPref(PREF_LAST_PULL, value.toString())
     }
 
+    /**
+     * How many rows are waiting to be uploaded. `SyncEngine` watches this so a save reaches the
+     * server on its own — without it, an edit sat on the device until the next manual refresh.
+     */
+    fun observeDirtyCount(): Flow<Long> =
+        queries.countDirty().asFlow().mapToOne(dispatcher)
+
     suspend fun knownGroupIds(): List<String> = withContext(dispatcher) {
         queries.selectAllGroupIds().executeAsList()
     }
@@ -394,6 +402,13 @@ class SplitsRepository(
             payload.groups.forEach { queries.clearGroupDirty(it.id) }
             payload.members.forEach { queries.clearMemberDirty(it.id) }
             payload.expenses.forEach { queries.clearExpenseDirty(it.id) }
+
+            // The server has the deletion now, so the local tombstone has done its job and the
+            // row can go for good. Anything still dirty is left alone.
+            queries.purgeSyncedTombstones()
+            queries.purgeSyncedMemberTombstones()
+            queries.purgeSyncedGroupTombstones()
+            queries.purgeOrphanSplits()
         }
     }
 
@@ -407,6 +422,7 @@ class SplitsRepository(
     suspend fun applyRemote(
         snapshot: RemoteSnapshot,
         ignoreExpenseIds: Set<String> = emptySet(),
+        requestedGroupIds: List<String> = emptyList(),
     ): List<ExpenseNotice> = withContext(dispatcher) {
         val notices = mutableListOf<ExpenseNotice>()
 
@@ -504,9 +520,83 @@ class SplitsRepository(
                     queries.insertSplit(remote.id, share.memberId, share.shareMinor)
                 }
             }
+
+            notices += reconcileDeletions(snapshot, requestedGroupIds)
+            queries.purgeOrphanSplits()
         }
 
         notices
+    }
+
+    /**
+     * Removes local rows the server no longer has.
+     *
+     * Deletions are permanent server-side, so nothing arrives to say "this was deleted" — the
+     * id simply stops appearing in the pull's live-id lists. Comparing against those lists is
+     * how an offline device catches up.
+     *
+     * Two guards make this safe:
+     *  - `dirty = 0` only. A row this device created or deleted but has not pushed yet is not
+     *    on the server *because we have not sent it*, not because it was deleted.
+     *  - Only groups the snapshot actually reported on. A null list means an older server that
+     *    does not send them, and reconciling on absent data would wipe the database.
+     */
+    private fun reconcileDeletions(
+        snapshot: RemoteSnapshot,
+        requestedGroupIds: List<String>,
+    ): List<ExpenseNotice> {
+        val liveGroups = snapshot.liveGroupIds ?: return emptyList()
+        val liveMembers = snapshot.liveMemberIds?.toSet() ?: return emptyList()
+        val liveExpenses = snapshot.liveExpenseIds?.toSet() ?: return emptyList()
+        val notices = mutableListOf<ExpenseNotice>()
+
+        // A group the admin deleted is simply absent from live_group_ids, so it can only be
+        // spotted by comparing against what we asked about. Without this the group would sit
+        // on the device forever, since nothing in the response ever mentions it again.
+        val liveGroupSet = liveGroups.toSet()
+        for (groupId in requestedGroupIds) {
+            if (groupId in liveGroupSet) continue
+            val local = queries.selectGroupById(groupId).executeAsOneOrNull() ?: continue
+            // Never remove a group this device has not managed to push yet — it is missing
+            // from the server because we have not sent it, not because it was deleted.
+            if (local.dirty) continue
+
+            queries.deleteSplitsOfGroup(groupId)
+            queries.deleteExpensesOfGroup(groupId)
+            queries.deleteMembersOfGroup(groupId)
+            queries.hardDeleteGroup(groupId)
+        }
+
+        for (groupId in liveGroups) {
+            val group = queries.selectGroupById(groupId).executeAsOneOrNull() ?: continue
+
+            queries.selectExpenseIdsOfGroup(groupId).executeAsList().forEach { expenseId ->
+                if (expenseId in liveExpenses) return@forEach
+                val row = queries.selectExpenseById(expenseId).executeAsOneOrNull()
+                if (row != null && !row.deleted) {
+                    notices += ExpenseNotice(
+                        expenseId = row.id,
+                        groupId = groupId,
+                        groupName = group.name,
+                        groupEmoji = group.emoji,
+                        title = row.title,
+                        amountMinor = row.amountMinor,
+                        currencyCode = group.currencyCode,
+                        actorName = queries.selectMemberById(row.paidByMemberId)
+                            .executeAsOneOrNull()?.name ?: "Someone",
+                        kind = NoticeKind.Removed,
+                    )
+                }
+                queries.deleteSplitsOfExpense(expenseId)
+                queries.hardDeleteExpense(expenseId)
+            }
+
+            queries.selectMemberIdsOfGroup(groupId).executeAsList().forEach { memberId ->
+                if (memberId !in liveMembers) queries.hardDeleteMember(memberId)
+            }
+        }
+
+        return notices
     }
 
     suspend fun lastPurgeAt(): Long = withContext(dispatcher) {

@@ -76,6 +76,7 @@ import com.kanishk.splits.model.minorToEditText
 import com.kanishk.splits.model.nowMillis
 import com.kanishk.splits.model.parseAmountToMinor
 import com.kanishk.splits.model.resolveCategory
+import com.kanishk.splits.model.suggestCategoryId
 import com.kanishk.splits.model.symbolOf
 import com.kanishk.splits.ui.ExpenseEditorRoute
 import com.kanishk.splits.ui.components.Avatar
@@ -111,6 +112,7 @@ fun ExpenseEditorScreen(
     var amountText by remember { mutableStateOf(minorToEditText(route.presetAmountMinor)) }
     var title by remember { mutableStateOf("") }
     var categoryId by remember { mutableStateOf<String?>(null) }
+    var categoryPickedByHand by remember { mutableStateOf(false) }
     var paidBy by remember { mutableStateOf(route.presetFromMemberId) }
     var paidTo by remember { mutableStateOf(route.presetToMemberId) }
     var occurredAt by remember { mutableStateOf(nowMillis()) }
@@ -137,6 +139,7 @@ fun ExpenseEditorScreen(
             amountText = minorToEditText(loadedExpense.amountMinor)
             title = loadedExpense.title
             categoryId = loadedExpense.categoryId
+            categoryPickedByHand = true
             paidBy = loadedExpense.paidByMemberId
             paidTo = loadedExpense.paidToMemberId
             occurredAt = loadedExpense.occurredAt
@@ -162,6 +165,13 @@ fun ExpenseEditorScreen(
         if (paidBy == null) {
             paidBy = group.meIn(repository.deviceId)?.id ?: group.members.firstOrNull()?.id
         }
+    }
+
+    // Guess a category from the title — "Train to Goa" should not sit on None. Only ever fills
+    // a gap: once the user taps a chip, their choice stands and this stops interfering.
+    LaunchedEffect(title, categoryPickedByHand) {
+        if (categoryPickedByHand) return@LaunchedEffect
+        suggestCategoryId(title)?.let { categoryId = it }
     }
 
     if (current == null || !loaded) {
@@ -342,7 +352,11 @@ fun ExpenseEditorScreen(
                 item {
                     CategoryPicker(
                         selectedId = categoryId,
-                        onSelect = { categoryId = it },
+                        suggested = !categoryPickedByHand && categoryId != null,
+                        onSelect = {
+                            categoryPickedByHand = true
+                            categoryId = it
+                        },
                         onCustom = { showCustomCategory = true },
                     )
                 }
@@ -423,6 +437,7 @@ fun ExpenseEditorScreen(
         CustomCategoryDialog(
             onDismiss = { showCustomCategory = false },
             onConfirm = { label ->
+                categoryPickedByHand = true
                 categoryId = customCategoryId(label)
                 showCustomCategory = false
             },
@@ -529,13 +544,24 @@ private val IntrinsicWidthMin = 200.dp
 @Composable
 private fun CategoryPicker(
     selectedId: String?,
+    suggested: Boolean,
     onSelect: (String?) -> Unit,
     onCustom: () -> Unit,
 ) {
     val custom = resolveCategory(selectedId)?.takeIf { it.isCustom }
 
     Column {
-        SectionLabel("Category (optional)")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SectionLabel("Category (optional)")
+            if (suggested) {
+                Text(
+                    "  ·  suggested from the title",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 10.sp,
+                )
+            }
+        }
         VSpace(10.dp)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             item {

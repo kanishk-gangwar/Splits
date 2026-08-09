@@ -60,6 +60,17 @@ data class RemoteShare(
 @Serializable
 data class RemoteSnapshot(
     val found: Boolean = true,
+    /**
+     * The complete set of ids the server still has for the groups that were asked about.
+     * Anything local and missing from these has been deleted — absence is the signal, which is
+     * what lets the server hard-delete instead of keeping tombstones around.
+     *
+     * Null means an older server that does not send them; reconciliation is then skipped
+     * rather than wrongly wiping local data.
+     */
+    @SerialName("live_group_ids") val liveGroupIds: List<String>? = null,
+    @SerialName("live_member_ids") val liveMemberIds: List<String>? = null,
+    @SerialName("live_expense_ids") val liveExpenseIds: List<String>? = null,
     val groups: List<RemoteGroup> = emptyList(),
     val members: List<RemoteMember> = emptyList(),
     val expenses: List<RemoteExpense> = emptyList(),

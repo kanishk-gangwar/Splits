@@ -14,6 +14,7 @@ put together, and more importantly *why* the awkward bits are the way they are.
 - [Archived means read-only](#archived-means-read-only)
 - [Filtering by participant](#filtering-by-participant)
 - [Notifications](#notifications)
+- [Category suggestions](#category-suggestions)
 - [UI conventions](#ui-conventions)
 - [Build setup and its sharp edges](#build-setup-and-its-sharp-edges)
 - [Testing](#testing)
@@ -217,24 +218,38 @@ about. Pushing first means last-write-wins resolves against complete information
 **Per-row dirty flags.** Every table has a `dirty` column, set on write and cleared after a
 successful push. Only touched rows go up.
 
-**Deletes are tombstones, then reclaimed.** Rows are marked `deleted` rather than removed, so
-other devices learn about a deletion on their next pull instead of keeping a ghost group
-forever. The tombstone *is* the message: a device that has not synced since before the deletion
-pulls `updated_at > watermark`, and if the row were simply gone, nothing in that response would
-tell it to drop its local copy.
+**Deletes are permanent, and absence is the signal.** This is the one part of the sync design
+that is not obvious, so it is worth stating carefully.
 
-So storage is reclaimed on a delay rather than immediately:
+The naive approach — hard-delete the row and move on — silently breaks offline devices. A pull
+asks for `updated_at > watermark`; if a row is simply gone, nothing in that response mentions
+it, and the deleted expense lives on that phone forever. The usual fix is a tombstone: keep the
+row with `deleted = true` so the deletion has something to travel on. That works, but deleted
+data then accumulates forever.
 
-- **Share rows go straight away.** They carry no deletion signal of their own — the expense's
-  tombstone already says everything — so they are deleted the moment the expense is, on both
-  the device and the server. In practice this is most of the row count.
-- **Tombstones are purged after 30 days**, by `splits_purge_deleted(retention_days)` on the
-  server and `purgeLocalTombstones` on the device. `SyncEngine` calls both at most once a day,
-  after a successful pull, and swallows failures — reclaiming disk is housekeeping and is not
-  worth failing a sync over. The server function clamps the window to a minimum of 7 days so a
-  caller cannot purge tombstones nobody has seen yet.
-- **Locally, `dirty = 0` guards every purge.** A deletion this device has not managed to push
-  yet is the only record that it happened; purging it would resurrect the row on the next pull.
+So `splits_pull` returns three extra lists — `live_group_ids`, `live_member_ids`,
+`live_expense_ids` — carrying **every** id the server still holds for the requested groups,
+regardless of the watermark. The client compares its local rows against those lists and drops
+whatever is missing. Absence itself becomes the deletion signal, which means the server can
+hard-delete immediately and keep nothing.
+
+`reconcileDeletions` has three guards, each load-bearing:
+
+- **`dirty = 0` only.** A row this device created or deleted but has not pushed yet is absent
+  from the server *because we have not sent it*. Reconciling it away would destroy unsaved work.
+- **A null list means skip.** An older server that does not send the lists must not be read as
+  "the server has nothing", or the first sync would wipe the database.
+- **Deleted groups are found by what was asked for, not what came back.** A deleted group is
+  absent from `live_group_ids` entirely, so it can only be spotted by diffing against the ids
+  the client requested. That is why `requestedGroupIds` is threaded through `applyRemote`.
+
+Locally, a delete still writes a tombstone first — it is the only record that the deletion
+happened, and it must survive until the push succeeds. `markPushed` clears it immediately
+afterwards. `splits_purge_deleted` remains as a sweep for rows left by earlier versions.
+
+The cost is sending every live id on each pull. At a few hundred expenses that is a few
+kilobytes, a good trade for never accumulating deleted data. At tens of thousands it would want
+revisiting — probably a `deleted_since` feed instead.
 
 **`archived` and `hidden` never sync.** They are this device's shelving decisions. If they
 synced, one person archiving a trip would archive it for everyone, and a hidden group would
@@ -306,6 +321,24 @@ is not the same as preventing an action:
 
 Archiving is per-device (see [Sync](#sync)), so one person archiving does not freeze the group
 for everyone else.
+
+## Category suggestions
+
+`model/CategorySuggest.kt` maps title text to a built-in category, so "Train to Goa" lands on
+Transport instead of None.
+
+Matching is **per word, not substring** — otherwise "bar" fires on "barber" and "cat" on
+"category". Simple plurals are folded in (`-s` and `-es`, so "buses" reaches "bus"). Rules are
+ordered and the first hit wins, which is how "petrol" reaches Fuel before Transport claims it.
+
+Deliberately conservative: genuinely ambiguous words ("ticket", "bill", "fees") are left out
+entirely rather than assigned to whichever category seemed most likely. A wrong guess is worse
+than no guess, because the user has to notice it and undo it.
+
+The suggestion only ever fills a gap. The editor tracks `categoryPickedByHand`; once the user
+taps any chip their choice stands, and opening an existing expense counts as already decided.
+While a suggestion is showing, the picker labels it "suggested from the title" so it is never
+mistaken for something the user chose.
 
 ## Filtering by participant
 
@@ -420,6 +453,7 @@ All tests in `commonTest` are pure logic:
 | `MoneyTest` | formatting, parsing, even and weighted splits reconciling across many shapes |
 | `SplitPlanTest` | pinned-versus-automatic rows, percent handling, settlement shape |
 | `ExpenseFilterTest` | participant filtering matches both payers and share-holders |
+| `CategorySuggestTest` | word-boundary matching, plurals, rule precedence, no false positives |
 | `BalancesTest` | reimbursement excluded from total, balances netting to zero, settle-up clearing every debt |
 
 ```bash
@@ -444,6 +478,7 @@ composable a shell over it — that is exactly how `SplitPlan` came to exist.
 - **No conflict UI.** Sync resolves silently by last-write-wins. Two people editing the same
   expense offline means one loses without being told.
 - **Notifications only arrive while the app syncs.** See [Notifications](#notifications).
+- **Pull sends every live id.** Fine at this scale, wasteful at tens of thousands of expenses.
 - **No multi-currency conversion.** Groups are single-currency, and the home screen lists
   positions per currency rather than summing them, because summing rupees and dollars would
   produce a confident wrong number.

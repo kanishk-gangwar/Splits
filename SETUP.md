@@ -114,8 +114,11 @@ writes can sort incorrectly against another's. For a group of friends splitting 
 is the right trade — it avoids a round trip for a server timestamp on every single write. If
 it ever matters, stamp `updated_at` inside `splits_push` from `now()` instead.
 
-**Deletes are tombstones.** Rows are marked `deleted` rather than removed, so other devices
-learn about a deletion on their next pull instead of silently keeping a ghost group.
+**Deletes are permanent.** A deleted expense is removed from the table outright — nothing is
+left behind flagged as deleted. Devices that were offline find out because `splits_pull` returns
+the full list of ids the server still holds, and anything missing locally is dropped. This is
+why re-running the schema matters: without those lists an offline phone would never learn that
+something had been deleted.
 
 **Two things never sync: `archived` and `hidden`.** They are this device's shelving
 decisions. If they synced, one person archiving a trip would archive it for everyone, and a

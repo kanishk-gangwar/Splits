@@ -54,11 +54,23 @@ fun inviteLink(code: String): String = "$INVITE_WEB_BASE#$code"
 
 fun inviteDeepLink(code: String): String = "splits://join/$code"
 
+/**
+ * Always serves the newest release, because every release attaches its APK under this exact
+ * filename. Renaming the asset breaks the link, so the release title carries the version
+ * instead of the file name.
+ */
+const val APP_DOWNLOAD_URL =
+    "https://github.com/kanishk-gangwar/Splits/releases/latest/download/Splits.apk"
+
 fun inviteShareMessage(groupName: String, code: String): String = buildString {
     append("Join \"")
     append(groupName)
-    append("\" on Splits\n\n")
+    append("\" on Splits — split expenses without accounts or phone numbers.\n\n")
     append(inviteLink(code))
-    append("\n\nOr open the app and enter code: ")
+    append("\n\nAlready have the app? Enter this code: ")
     append(code)
+    // Most people receiving an invite will not have the app yet, so the download comes with it
+    // rather than being something the sender has to remember to paste separately.
+    append("\n\nGet the app for Android:\n")
+    append(APP_DOWNLOAD_URL)
 }
