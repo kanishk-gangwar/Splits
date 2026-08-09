@@ -14,6 +14,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
@@ -21,7 +22,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import com.kanishk.splits.data.SplitsRepository
 import com.kanishk.splits.data.createSqlDriver
 import com.kanishk.splits.data.requestNotificationPermission
@@ -57,13 +62,30 @@ fun App() {
     // One driver, one database, for the life of the process.
     val repository = remember { SplitsRepository(SplitsDatabase(createSqlDriver())) }
     val syncEngine = remember { SyncEngine(repository) }
+    val scope = rememberCoroutineScope()
     val themePref by repository.observeThemeMode().collectAsStateWithLifecycle("system")
 
-    // Catch up with the server once on launch. Failing here is silent by design: the UI is
-    // already rendering local data, and pull-to-refresh gives the user an explicit retry.
-    LaunchedEffect(Unit) {
-        requestNotificationPermission()
-        syncEngine.syncNow()
+    LaunchedEffect(Unit) { requestNotificationPermission() }
+
+    // Poll while the app is in the foreground.
+    //
+    // Without this, a device only ever synced on launch, on pull-to-refresh, or after its own
+    // edit — so someone else's expense (and its notification) would not arrive until you
+    // happened to reopen or swipe down, even with the app sitting open in front of you.
+    //
+    // Tied to the resumed state so nothing runs in the background draining battery. This is a
+    // foreground poll, not push: a phone with the app closed still hears nothing until it is
+    // opened. Real push would need FCM and APNs plus a server holding device tokens.
+    LifecycleResumeEffect(Unit) {
+        val job = scope.launch {
+            while (isActive) {
+                // Failing is silent by design: the UI is already rendering local data, and
+                // pull-to-refresh remains the explicit retry.
+                syncEngine.syncNow()
+                delay(FOREGROUND_POLL_MILLIS)
+            }
+        }
+        onPauseOrDispose { job.cancel() }
     }
 
     CompositionLocalProvider(
@@ -79,6 +101,13 @@ fun App() {
 }
 
 private const val TRANSITION_MS = 260
+
+/**
+ * How often a foregrounded app checks for other people's changes. Frequent enough that a shared
+ * expense shows up while you are both looking at the app, infrequent enough to be cheap — each
+ * poll is one small request.
+ */
+private const val FOREGROUND_POLL_MILLIS = 30_000L
 
 @Composable
 private fun SplitsNavHost() {

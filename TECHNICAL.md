@@ -380,11 +380,36 @@ placeholder `${notices.size} updates in $where` to real phones. A composable or 
 call cannot be asserted on, but a function returning a string can, and `NotificationTextTest`
 now checks that no notification text ever contains an uninterpolated placeholder.
 
-**The limitation, stated plainly: these are local notifications, not push.** They arrive when
-the app syncs — on launch, or on pull-to-refresh. A phone with the app closed will not be told
-anything. Real push needs FCM and APNs plus a server holding device tokens, which is beyond
-what a free Supabase project provides. Delivering it would mean a Supabase Edge Function
-triggered on insert, an FCM project, an Apple push key, and a token table.
+### When they actually arrive
+
+A notification is only produced by a sync **pull**, so the question is really "when does a
+device pull?". There are four triggers:
+
+| Trigger | Covers |
+|---|---|
+| App launch | opening the app after someone else changed something |
+| Foreground poll, every 30s | both people have the app open |
+| Pull-to-refresh | explicit retry |
+| ~700ms after a local write | uploading your own edit |
+
+The foreground poll exists because the first three left an obvious hole: with the app open and
+idle, a device never checked, so a shared expense simply did not appear until you swiped down.
+It is bound to the resumed lifecycle state via `LifecycleResumeEffect`, so nothing polls in the
+background.
+
+**The limitation, stated plainly: these are local notifications, not push.** A phone with the
+app closed is told nothing, and will only find out when it is next opened. That is a real
+difference from what "notifications" usually implies, and no amount of polling fixes it —
+polling requires the app to be running.
+
+Closing that gap properly means real push:
+
+- **Android is achievable on free tiers.** Firebase Cloud Messaging costs nothing. The shape is
+  a `device_tokens` table, a Supabase Database Webhook on `splits_expenses`, an Edge Function
+  that looks up the group's other devices and calls FCM, and a `FirebaseMessagingService` in
+  the app.
+- **iOS is not.** APNs requires the Apple Developer Program at $99/year, so there is no free
+  path at all.
 
 Android needs the runtime `POST_NOTIFICATIONS` permission from API 33; `MainActivity` asks on
 launch and `showNotification` checks before posting, so a refusal degrades to silence rather
