@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -101,6 +102,11 @@ fun JoinScreen(
             else -> {
                 val members = detail?.members.orEmpty()
                 val myId = detail?.meIn(repository.deviceId)?.id
+                // Only names nobody is holding are offered — plus your own, if you already
+                // claimed one here. Someone else's name is not a choice, and listing it just
+                // invites the wrong tap.
+                val available = members.filter { !it.isClaimed || it.id == myId }
+                val joined = members.count { it.isClaimed }
 
                 LazyColumn(
                     modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()),
@@ -130,7 +136,7 @@ fun JoinScreen(
                             )
                             VSpace(6.dp)
                             Text(
-                                "${members.size} people · pick your name to join",
+                                "$joined of ${members.size} joined",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center,
@@ -138,18 +144,34 @@ fun JoinScreen(
                         }
                     }
 
-                    items(members, key = { it.id }) { member ->
-                        val takenByOther = member.isClaimed && member.id != myId
+                    if (available.isEmpty()) {
+                        item {
+                            EmptyState(
+                                glyph = "🔒",
+                                title = "Every name is taken",
+                                subtitle = "All ${members.size} names in this group are already " +
+                                    "in use on other devices. Ask the admin to add one for you, " +
+                                    "or to free yours up if you're switching phones.",
+                            )
+                        }
+                    } else {
+                        item {
+                            Text(
+                                if (myId == null) "Pick your name" else "Your name",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 4.dp),
+                            )
+                        }
+                    }
+
+                    items(available, key = { it.id }) { member ->
                         SplitsCard(
                             Modifier.fillMaxWidth(),
-                            onClick = if (takenByOther) {
-                                null
-                            } else {
-                                {
-                                    scope.launch {
-                                        repository.claimMember(found.id, member.id)
-                                        onJoined(found.id)
-                                    }
+                            onClick = {
+                                scope.launch {
+                                    repository.claimMember(found.id, member.id)
+                                    onJoined(found.id)
                                 }
                             },
                         ) {
@@ -167,18 +189,10 @@ fun JoinScreen(
                                     Text(
                                         member.name,
                                         style = MaterialTheme.typography.bodyLarge,
-                                        color = if (takenByOther) {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurface
-                                        },
+                                        color = MaterialTheme.colorScheme.onSurface,
                                     )
                                     Text(
-                                        text = when {
-                                            member.id == myId -> "that's you"
-                                            takenByOther -> "already claimed on another device"
-                                            else -> "tap to claim"
-                                        },
+                                        text = if (member.id == myId) "that's you" else "tap to claim",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = if (member.id == myId) {
                                             MaterialTheme.colorScheme.primary
@@ -188,7 +202,7 @@ fun JoinScreen(
                                     )
                                 }
                                 Icon(
-                                    if (takenByOther) Icons.Outlined.Lock else Icons.Outlined.PersonAddAlt,
+                                    Icons.Outlined.PersonAddAlt,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp),
@@ -197,9 +211,46 @@ fun JoinScreen(
                         }
                     }
 
+                    if (joined > 0) {
+                        item {
+                            Text(
+                                "Already joined",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 10.dp, start = 4.dp),
+                            )
+                        }
+                        items(
+                            members.filter { it.isClaimed && it.id != myId },
+                            key = { "joined-${it.id}" },
+                        ) { member ->
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Avatar(member.name, member.colorIndex, size = 28.dp)
+                                Text(
+                                    member.name,
+                                    modifier = Modifier.weight(1f).padding(start = 12.dp),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Icon(
+                                    Icons.Outlined.Lock,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(15.dp),
+                                )
+                            }
+                        }
+                    }
+
                     item {
                         Text(
-                            "Not on the list? Ask the admin to add your name, then reopen this link.",
+                            "A name disappears from the list once someone claims it, and comes " +
+                                "back if they give it up or leave the group.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center,

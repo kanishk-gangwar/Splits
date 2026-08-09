@@ -21,6 +21,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material3.Button
@@ -70,6 +72,7 @@ import com.kanishk.splits.ui.components.SplitsTopBar
 import com.kanishk.splits.ui.components.SyncRefreshBox
 import com.kanishk.splits.ui.components.VSpace
 import com.kanishk.splits.ui.components.balanceColor
+import com.kanishk.splits.ui.theme.SplitsTheme
 import com.kanishk.splits.ui.theme.categoryTint
 import kotlinx.coroutines.launch
 
@@ -186,14 +189,26 @@ fun GroupScreen(
 
             item {
                 SegmentedControl(
-                    options = listOf("Expenses", "Balances"),
+                    options = listOf(
+                        "Expenses",
+                        "Balances",
+                        "People ${current.joinedCount}/${current.members.size}",
+                    ),
                     selectedIndex = tab,
                     onSelect = { tab = it },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
 
-            if (tab == 0) {
+            if (tab == 2) {
+                peopleTab(
+                    detail = current,
+                    myMemberId = me?.id,
+                    readOnly = readOnly,
+                    onPickIdentity = { showIdentityPicker = true },
+                    onShareInvite = { showInvite = true },
+                )
+            } else if (tab == 0) {
                 if (current.members.size > 1 && current.expenses.isNotEmpty()) {
                     item {
                         ParticipantFilterRow(
@@ -212,7 +227,7 @@ fun GroupScreen(
                     readOnly = readOnly,
                     onEditExpense = onEditExpense,
                 )
-            } else {
+            } else if (tab == 1) {
                 balancesTab(
                     detail = current,
                     summary = summary,
@@ -236,6 +251,7 @@ fun GroupScreen(
     if (showIdentityPicker) {
         IdentityPickerSheet(
             members = current.members,
+            claimedByMe = me?.id,
             onDismiss = { showIdentityPicker = false },
             onPick = { memberId ->
                 scope.launch { repository.claimMember(groupId, memberId) }
@@ -632,6 +648,124 @@ private fun ExpenseRow(
                     )
                 }
             }
+        }
+    }
+}
+
+// ------------------------------------------------------------------- people --
+
+/**
+ * Who is in the group and who has actually turned up. The distinction matters: a participant
+ * exists as soon as someone types their name, but they have not *joined* until a device claims
+ * it, and until then nobody is seeing their balance.
+ */
+private fun androidx.compose.foundation.lazy.LazyListScope.peopleTab(
+    detail: GroupDetail,
+    myMemberId: String?,
+    readOnly: Boolean,
+    onPickIdentity: () -> Unit,
+    onShareInvite: () -> Unit,
+) {
+    val waiting = detail.availableMembers
+
+    item {
+        SplitsCard(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "${detail.joinedCount} of ${detail.members.size} joined",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = when {
+                                detail.members.isEmpty() -> "Nobody has been added yet."
+                                waiting.isEmpty() -> "Everyone has claimed their name."
+                                else -> "${waiting.size} name${if (waiting.size == 1) "" else "s"} still unclaimed."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (waiting.isNotEmpty() && !readOnly) {
+                        TextButton(onClick = onShareInvite) { Text("Invite") }
+                    }
+                }
+
+                if (myMemberId == null && waiting.isNotEmpty() && !readOnly) {
+                    VSpace(12.dp)
+                    Button(
+                        onClick = onPickIdentity,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Pick your name") }
+                }
+            }
+        }
+    }
+
+    if (detail.joinedMembers.isNotEmpty()) {
+        item {
+            Text(
+                "Joined",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp, start = 4.dp),
+            )
+        }
+        items(detail.joinedMembers, key = { "joined-${it.id}" }) { member ->
+            PersonRow(member = member, joined = true, isMe = member.id == myMemberId)
+        }
+    }
+
+    if (waiting.isNotEmpty()) {
+        item {
+            Text(
+                "Not joined yet",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp, start = 4.dp),
+            )
+        }
+        items(waiting, key = { "waiting-${it.id}" }) { member ->
+            PersonRow(member = member, joined = false, isMe = false)
+        }
+    }
+}
+
+@Composable
+private fun PersonRow(member: Member, joined: Boolean, isMe: Boolean) {
+    SplitsCard(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Avatar(member.name, member.colorIndex, size = 38.dp, ring = isMe)
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text(
+                    if (isMe) "${member.name} (you)" else member.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = if (joined) "on a device" else "name is free to claim",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                imageVector = if (joined) Icons.Outlined.CheckCircle else Icons.Outlined.Schedule,
+                contentDescription = null,
+                tint = if (joined) {
+                    SplitsTheme.money.positive
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }

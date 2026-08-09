@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
@@ -79,6 +80,7 @@ fun GroupSettingsScreen(
     var renaming by remember { mutableStateOf<Pair<String, String>?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
     var removeBlocked by remember { mutableStateOf<String?>(null) }
+    var confirmRelease by remember { mutableStateOf(false) }
 
     val current = detail
     if (current == null) {
@@ -331,6 +333,17 @@ fun GroupSettingsScreen(
                 )
             }
 
+            if (me != null) {
+                item {
+                    ActionCard(
+                        icon = Icons.AutoMirrored.Outlined.Logout,
+                        title = "Give up my name",
+                        subtitle = "Frees \"${me.name}\" for someone else. Nothing is deleted.",
+                        onClick = { confirmRelease = true },
+                    )
+                }
+            }
+
             item {
                 ActionCard(
                     icon = if (group.archived) Icons.Outlined.Unarchive else Icons.Outlined.Archive,
@@ -446,6 +459,30 @@ fun GroupSettingsScreen(
                 }
                 confirmDelete = false
             },
+        )
+    }
+
+    if (confirmRelease && me != null) {
+        AlertDialog(
+            onDismissRequest = { confirmRelease = false },
+            title = { Text("Give up \"${me.name}\"?") },
+            text = {
+                Text(
+                    "The name goes back on the list for anyone with the invite to claim. " +
+                        "Expenses and balances are untouched — you just stop being identified " +
+                        "as ${me.name} on this device."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch { repository.releaseMyIdentity(groupId) }
+                    confirmRelease = false
+                }) { Text("Give it up") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRelease = false }) { Text("Cancel") }
+            },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         )
     }
 

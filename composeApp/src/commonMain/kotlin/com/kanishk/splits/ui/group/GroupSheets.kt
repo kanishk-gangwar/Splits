@@ -163,6 +163,12 @@ fun IdentityPickerSheet(
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
     ) {
+        // Names held by somebody else are left out entirely rather than shown greyed. A list
+        // full of unavailable names is an invitation to tap the wrong one, and the only thing
+        // a locked row tells you is that it is not for you.
+        val selectable = members.filter { !it.isClaimed || it.id == claimedByMe }
+        val takenByOthers = members.count { it.isClaimed && it.id != claimedByMe }
+
         Column(Modifier.navigationBarsPadding().padding(bottom = 20.dp)) {
             Text(
                 "Which one are you?",
@@ -171,20 +177,34 @@ fun IdentityPickerSheet(
                 modifier = Modifier.padding(horizontal = 24.dp),
             )
             Text(
-                "Tap your name to claim it on this device.",
+                text = if (selectable.isEmpty()) {
+                    "Every name here is already in use on another device."
+                } else {
+                    "Tap your name to claim it on this device."
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
             )
             VSpace(10.dp)
 
-            members.forEach { member ->
-                val takenByOther = member.isClaimed && member.id != claimedByMe
+            selectable.forEach { member ->
                 MemberPickRow(
                     member = member,
-                    locked = takenByOther,
+                    locked = false,
                     isMe = member.id == claimedByMe,
-                    onClick = { if (!takenByOther) onPick(member.id) },
+                    onClick = { onPick(member.id) },
+                )
+            }
+
+            if (takenByOthers > 0) {
+                Text(
+                    text = "$takenByOthers other name${if (takenByOthers == 1) " is" else "s are"} " +
+                        "already claimed. They free up if that person leaves the group or " +
+                        "switches to a different name.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
                 )
             }
         }

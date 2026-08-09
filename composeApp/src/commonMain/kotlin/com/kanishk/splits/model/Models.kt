@@ -84,6 +84,22 @@ data class GroupDetail(
         val me = meIn(deviceId) ?: return false
         return group.adminMemberId == me.id
     }
+
+    /** Participants somebody has actually claimed on a device. */
+    val joinedMembers: List<Member> get() = members.filter { it.isClaimed }
+
+    /**
+     * Names still up for grabs.
+     *
+     * A claimed name is not offered to anyone else — the point of the invite flow is that you
+     * pick *your* name, and a list full of taken names invites exactly the mistake of tapping
+     * someone else's. A name only returns here when its owner releases it or is removed.
+     */
+    val availableMembers: List<Member> get() = members.filter { !it.isClaimed }
+
+    val joinedCount: Int get() = joinedMembers.size
+
+    fun everyoneJoined(): Boolean = members.isNotEmpty() && joinedCount == members.size
 }
 
 /**

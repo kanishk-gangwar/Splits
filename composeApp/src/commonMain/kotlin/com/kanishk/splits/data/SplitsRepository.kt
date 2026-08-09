@@ -235,6 +235,15 @@ class SplitsRepository(
         }
     }
 
+    /**
+     * Gives up whichever name this device holds in [groupId], returning it to the pool so
+     * somebody else can claim it. The member row and its expenses stay exactly as they are —
+     * this is about who is holding the name, not about deleting anyone.
+     */
+    suspend fun releaseMyIdentity(groupId: String) = withContext(dispatcher) {
+        queries.releaseClaimsForDevice(nowMillis(), groupId, deviceId)
+    }
+
     /** A member can only be removed while they are not entangled in any expense. */
     suspend fun removeMember(groupId: String, memberId: String): Boolean = withContext(dispatcher) {
         val expenses = queries.selectExpensesOfGroup(groupId).executeAsList()

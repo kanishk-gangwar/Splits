@@ -15,6 +15,7 @@ put together, and more importantly *why* the awkward bits are the way they are.
 - [Filtering by participant](#filtering-by-participant)
 - [Notifications](#notifications)
 - [Category suggestions](#category-suggestions)
+- [Who has joined](#who-has-joined)
 - [UI conventions](#ui-conventions)
 - [Build setup and its sharp edges](#build-setup-and-its-sharp-edges)
 - [Testing](#testing)
@@ -79,6 +80,15 @@ Consequences, all intentional:
 - **An invite link is a capability.** Anyone holding the 8-character code can see the group and
   claim an unclaimed name. There is nothing else guarding it, and the server enforces exactly
   that and no more.
+- **A claimed name leaves the pool entirely.** The join screen and the identity picker list
+  only names nobody holds — taken names are not shown greyed out. A row you cannot pick tells
+  you nothing except that it is not for you, and a list full of them invites the wrong tap. The
+  count of who has joined is shown separately, which is the information a locked row was really
+  carrying.
+- **A name comes back when it is given up.** `releaseMyIdentity` clears the claim without
+  touching the member row or its expenses, so the name returns to the pool. That is the only
+  way to move to a new phone, and it is what makes "taken" a temporary state rather than a
+  dead end.
 - **Claiming is exclusive per group.** `claimMember` releases any other name this device holds
   in that group first, so one device can never be two people in the same group.
 - **"Admin" is a member id, not a user.** `groupEntity.adminMemberId` points at a member row;
@@ -340,6 +350,21 @@ taps any chip their choice stands, and opening an existing expense counts as alr
 While a suggestion is showing, the picker labels it "suggested from the title" so it is never
 mistaken for something the user chose.
 
+## Who has joined
+
+A participant exists as soon as somebody types their name. They have not **joined** until a
+device claims it — and until then nobody is seeing their balance on their own phone. Those are
+different things and the UI keeps them apart.
+
+`GroupDetail` exposes `joinedMembers`, `availableMembers`, `joinedCount` and `everyoneJoined()`.
+The People tab in a group shows the split ("3 of 5 joined") with the two lists underneath, and
+the tab label itself carries the count so it is visible without opening it. The join screen
+leads with the same number.
+
+`everyoneJoined()` deliberately returns false for an empty group, so `0 == 0` never reads as
+"everyone is here". `MembershipTest` covers that along with release, admin transfer, and the
+all-taken case.
+
 ## Filtering by participant
 
 The expenses tab carries a chip row: *Everyone* plus one chip per member, the device owner
@@ -486,6 +511,7 @@ All tests in `commonTest` are pure logic:
 | `ExpenseFilterTest` | participant filtering matches both payers and share-holders |
 | `CategorySuggestTest` | word-boundary matching, plurals, rule precedence, no false positives |
 | `NotificationTextTest` | finished notification strings, including that none contain a raw placeholder |
+| `MembershipTest` | name availability, joined counts, releasing a name, admin following the claim |
 | `BalancesTest` | reimbursement excluded from total, balances netting to zero, settle-up clearing every debt |
 
 ```bash
