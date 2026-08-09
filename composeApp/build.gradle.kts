@@ -146,8 +146,8 @@ android {
         applicationId = "com.kanishk.splits"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 11
-        versionName = "1.3.2"
+        versionCode = 12
+        versionName = "1.3.3"
     }
 
     packaging {
