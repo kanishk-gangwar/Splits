@@ -1,0 +1,24 @@
+*.iml
+.gradle/
+.kotlin/
+build/
+captures/
+.externalNativeBuild
+.cxx
+.DS_Store
+
+# Machine-specific SDK paths
+local.properties
+
+# IDE
+.idea/
+!.idea/codeStyles/
+!.idea/inspectionProfiles/
+
+# Xcode
+xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip

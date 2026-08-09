@@ -1,0 +1,222 @@
+import kotlin.Boolean;
+
+
+-- ---------------------------------------------------------------- groups ----
+
+CREATE TABLE groupEntity (
+    id              TEXT NOT NULL PRIMARY KEY,
+    name            TEXT NOT NULL,
+    emoji           TEXT NOT NULL,
+    currencyCode    TEXT NOT NULL,
+    inviteCode      TEXT NOT NULL UNIQUE,
+    adminMemberId   TEXT,
+    createdAt       INTEGER NOT NULL,
+    updatedAt       INTEGER NOT NULL,
+    archived        INTEGER AS Boolean NOT NULL DEFAULT 0,
+    hidden          INTEGER AS Boolean NOT NULL DEFAULT 0,
+    deleted         INTEGER AS Boolean NOT NULL DEFAULT 0,
+    dirty           INTEGER AS Boolean NOT NULL DEFAULT 1
+);
+
+CREATE INDEX groupEntity_invite ON groupEntity(inviteCode);
+
+selectVisibleGroups:
+SELECT * FROM groupEntity
+WHERE deleted = 0 AND hidden = 0
+ORDER BY updatedAt DESC;
+
+selectHiddenGroups:
+SELECT * FROM groupEntity
+WHERE deleted = 0 AND hidden = 1
+ORDER BY updatedAt DESC;
+
+selectGroupById:
+SELECT * FROM groupEntity WHERE id = ?;
+
+selectGroupByInvite:
+SELECT * FROM groupEntity WHERE inviteCode = ? AND deleted = 0;
+
+upsertGroup:
+INSERT OR REPLACE INTO groupEntity(
+    id, name, emoji, currencyCode, inviteCode, adminMemberId,
+    createdAt, updatedAt, archived, hidden, deleted, dirty
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- Archiving and hiding are per-device shelf decisions, not facts about the group, so
+-- neither marks the row dirty: they must never propagate to other participants.
+setGroupArchived:
+UPDATE groupEntity SET archived = ? WHERE id = ?;
+
+setGroupHidden:
+UPDATE groupEntity SET hidden = ? WHERE id = ?;
+
+setGroupAdmin:
+UPDATE groupEntity SET adminMemberId = ?, updatedAt = ?, dirty = 1 WHERE id = ?;
+
+-- Keeps the home screen ordered by real activity after an expense changes.
+touchGroup:
+UPDATE groupEntity SET updatedAt = ? WHERE id = ?;
+
+renameGroup:
+UPDATE groupEntity SET name = ?, emoji = ?, currencyCode = ?, updatedAt = ?, dirty = 1 WHERE id = ?;
+
+softDeleteGroup:
+UPDATE groupEntity SET deleted = 1, updatedAt = ?, dirty = 1 WHERE id = ?;
+
+hardDeleteGroup:
+DELETE FROM groupEntity WHERE id = ?;
+
+selectDirtyGroups:
+SELECT * FROM groupEntity WHERE dirty = 1;
+
+clearGroupDirty:
+UPDATE groupEntity SET dirty = 0 WHERE id = ?;
+
+-- --------------------------------------------------------------- members ----
+
+CREATE TABLE memberEntity (
+    id                TEXT NOT NULL PRIMARY KEY,
+    groupId           TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    colorIndex        INTEGER NOT NULL,
+    claimedByDeviceId TEXT,
+    createdAt         INTEGER NOT NULL,
+    updatedAt         INTEGER NOT NULL,
+    deleted           INTEGER AS Boolean NOT NULL DEFAULT 0,
+    dirty             INTEGER AS Boolean NOT NULL DEFAULT 1
+);
+
+CREATE INDEX memberEntity_group ON memberEntity(groupId);
+
+selectMembersOfGroup:
+SELECT * FROM memberEntity WHERE groupId = ? AND deleted = 0 ORDER BY createdAt ASC;
+
+selectAllMembers:
+SELECT * FROM memberEntity WHERE deleted = 0;
+
+selectMemberById:
+SELECT * FROM memberEntity WHERE id = ?;
+
+upsertMember:
+INSERT OR REPLACE INTO memberEntity(
+    id, groupId, name, colorIndex, claimedByDeviceId, createdAt, updatedAt, deleted, dirty
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+renameMember:
+UPDATE memberEntity SET name = ?, updatedAt = ?, dirty = 1 WHERE id = ?;
+
+claimMember:
+UPDATE memberEntity SET claimedByDeviceId = ?, updatedAt = ?, dirty = 1 WHERE id = ?;
+
+releaseClaimsForDevice:
+UPDATE memberEntity SET claimedByDeviceId = NULL, updatedAt = ?, dirty = 1
+WHERE groupId = ? AND claimedByDeviceId = ?;
+
+softDeleteMember:
+UPDATE memberEntity SET deleted = 1, updatedAt = ?, dirty = 1 WHERE id = ?;
+
+deleteMembersOfGroup:
+DELETE FROM memberEntity WHERE groupId = ?;
+
+selectDirtyMembers:
+SELECT * FROM memberEntity WHERE dirty = 1;
+
+clearMemberDirty:
+UPDATE memberEntity SET dirty = 0 WHERE id = ?;
+
+-- -------------------------------------------------------------- expenses ----
+
+CREATE TABLE expenseEntity (
+    id             TEXT NOT NULL PRIMARY KEY,
+    groupId        TEXT NOT NULL,
+    title          TEXT NOT NULL,
+    amountMinor    INTEGER NOT NULL,
+    paidByMemberId TEXT NOT NULL,
+    kind           TEXT NOT NULL,
+    categoryId     TEXT,
+    note           TEXT,
+    occurredAt     INTEGER NOT NULL,
+    createdAt      INTEGER NOT NULL,
+    updatedAt      INTEGER NOT NULL,
+    deleted        INTEGER AS Boolean NOT NULL DEFAULT 0,
+    dirty          INTEGER AS Boolean NOT NULL DEFAULT 1
+);
+
+CREATE INDEX expenseEntity_group ON expenseEntity(groupId);
+
+selectExpensesOfGroup:
+SELECT * FROM expenseEntity
+WHERE groupId = ? AND deleted = 0
+ORDER BY occurredAt DESC, createdAt DESC;
+
+selectAllExpenses:
+SELECT * FROM expenseEntity WHERE deleted = 0;
+
+selectExpenseById:
+SELECT * FROM expenseEntity WHERE id = ?;
+
+upsertExpense:
+INSERT OR REPLACE INTO expenseEntity(
+    id, groupId, title, amountMinor, paidByMemberId, kind, categoryId, note,
+    occurredAt, createdAt, updatedAt, deleted, dirty
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+softDeleteExpense:
+UPDATE expenseEntity SET deleted = 1, updatedAt = ?, dirty = 1 WHERE id = ?;
+
+deleteExpensesOfGroup:
+DELETE FROM expenseEntity WHERE groupId = ?;
+
+selectDirtyExpenses:
+SELECT * FROM expenseEntity WHERE dirty = 1;
+
+clearExpenseDirty:
+UPDATE expenseEntity SET dirty = 0 WHERE id = ?;
+
+-- ---------------------------------------------------------------- splits ----
+
+CREATE TABLE splitEntity (
+    expenseId  TEXT NOT NULL,
+    memberId   TEXT NOT NULL,
+    shareMinor INTEGER NOT NULL,
+    PRIMARY KEY (expenseId, memberId)
+);
+
+selectSplitsOfExpense:
+SELECT * FROM splitEntity WHERE expenseId = ?;
+
+selectSplitsOfGroup:
+SELECT s.* FROM splitEntity s
+JOIN expenseEntity e ON e.id = s.expenseId
+WHERE e.groupId = ? AND e.deleted = 0;
+
+selectAllSplits:
+SELECT * FROM splitEntity;
+
+insertSplit:
+INSERT OR REPLACE INTO splitEntity(expenseId, memberId, shareMinor) VALUES (?, ?, ?);
+
+deleteSplitsOfExpense:
+DELETE FROM splitEntity WHERE expenseId = ?;
+
+deleteSplitsOfGroup:
+DELETE FROM splitEntity WHERE expenseId IN (SELECT id FROM expenseEntity WHERE groupId = ?);
+
+-- ----------------------------------------------------------- preferences ----
+
+CREATE TABLE prefEntity (
+    key   TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+selectPref:
+SELECT value FROM prefEntity WHERE key = ?;
+
+selectAllPrefs:
+SELECT * FROM prefEntity;
+
+upsertPref:
+INSERT OR REPLACE INTO prefEntity(key, value) VALUES (?, ?);
+
+deletePref:
+DELETE FROM prefEntity WHERE key = ?;

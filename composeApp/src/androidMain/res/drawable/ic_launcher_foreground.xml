@@ -1,0 +1,18 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- left half-coin -->
+    <path
+        android:fillColor="#7C5CFF"
+        android:pathData="M52,30 A24,24 0 0 0 52,78 L52,66 A12,12 0 0 1 52,42 Z" />
+    <!-- right half-coin -->
+    <path
+        android:fillColor="#31D0AA"
+        android:pathData="M56,30 A24,24 0 0 1 56,78 L56,66 A12,12 0 0 0 56,42 Z" />
+    <!-- divider -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M53,26 L55,26 L55,82 L53,82 Z" />
+</vector>

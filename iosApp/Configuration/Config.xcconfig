@@ -1,0 +1,5 @@
+// Edit TEAM_ID to your Apple Developer team before running on a physical device.
+// The simulator builds fine with it left empty.
+TEAM_ID=
+BUNDLE_ID=com.kanishk.splits
+APP_NAME=Splits
