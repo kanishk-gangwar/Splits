@@ -1,12 +1,11 @@
 package com.kanishk.splits.data.sync
 
 import com.kanishk.splits.data.ExpenseNotice
-import com.kanishk.splits.data.NoticeKind
 import com.kanishk.splits.data.SplitsRepository
 import com.kanishk.splits.data.remote.SplitsApi
 import com.kanishk.splits.data.remote.SyncNotConfigured
+import com.kanishk.splits.data.notificationFor
 import com.kanishk.splits.data.showNotification
-import com.kanishk.splits.model.formatMinor
 import com.kanishk.splits.model.nowMillis
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,8 +30,6 @@ sealed interface SyncStatus {
     data class Synced(val at: Long) : SyncStatus
     data class Failed(val message: String) : SyncStatus
 }
-
-private const val SUMMARY_NOTIFICATION_ID = 1
 
 /**
  * How long a tombstone survives before its storage is reclaimed.
@@ -176,34 +173,10 @@ class SyncEngine(
         }
     }
 
-    /**
-     * Turns what changed into notifications. One change gets the detail; several get a single
-     * summary, because a burst of individual notifications for one refresh is unusable.
-     */
+    /** Text building lives in [notificationFor] so it can be tested. */
     private fun announce(notices: List<ExpenseNotice>) {
-        if (notices.size == 1) {
-            val notice = notices.first()
-            val verb = when (notice.kind) {
-                NoticeKind.Added -> "added"
-                NoticeKind.Updated -> "updated"
-                NoticeKind.Removed -> "removed"
-            }
-            val amount = formatMinor(notice.amountMinor, notice.currencyCode)
-            showNotification(
-                id = notice.expenseId.hashCode(),
-                title = "${'$'}{notice.groupEmoji}  ${'$'}{notice.groupName}",
-                body = "${'$'}{notice.actorName} ${'$'}verb \"${'$'}{notice.title}\" · ${'$'}amount",
-            )
-            return
-        }
-
-        val groups = notices.map { it.groupName }.distinct()
-        val where = if (groups.size == 1) groups.first() else "${'$'}{groups.size} groups"
-        showNotification(
-            id = SUMMARY_NOTIFICATION_ID,
-            title = "Splits",
-            body = "${'$'}{notices.size} updates in ${'$'}where",
-        )
+        val content = notificationFor(notices) ?: return
+        showNotification(content.id, content.title, content.body)
     }
 
     /**

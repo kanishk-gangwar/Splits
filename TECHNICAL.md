@@ -374,6 +374,12 @@ survives. Three guards keep them from becoming noise:
 Notification ids are derived from the expense id, so editing an entry replaces its earlier
 notification instead of stacking a second one.
 
+The text itself is built by `notificationFor`, a pure function, and not inline at the call
+site. That is not tidiness for its own sake: a mis-escaped template once shipped the raw
+placeholder `${notices.size} updates in $where` to real phones. A composable or a platform
+call cannot be asserted on, but a function returning a string can, and `NotificationTextTest`
+now checks that no notification text ever contains an uninterpolated placeholder.
+
 **The limitation, stated plainly: these are local notifications, not push.** They arrive when
 the app syncs — on launch, or on pull-to-refresh. A phone with the app closed will not be told
 anything. Real push needs FCM and APNs plus a server holding device tokens, which is beyond
@@ -454,6 +460,7 @@ All tests in `commonTest` are pure logic:
 | `SplitPlanTest` | pinned-versus-automatic rows, percent handling, settlement shape |
 | `ExpenseFilterTest` | participant filtering matches both payers and share-holders |
 | `CategorySuggestTest` | word-boundary matching, plurals, rule precedence, no false positives |
+| `NotificationTextTest` | finished notification strings, including that none contain a raw placeholder |
 | `BalancesTest` | reimbursement excluded from total, balances netting to zero, settle-up clearing every debt |
 
 ```bash
