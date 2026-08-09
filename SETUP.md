@@ -13,6 +13,10 @@ and GitHub Pages (so shared invite links open something in a browser).
 1. Create a free project at [supabase.com](https://supabase.com). Any region near you is fine.
 2. Open **SQL Editor → New query**, paste the whole of
    [`backend/supabase/schema.sql`](backend/supabase/schema.sql), and run it.
+
+   > The script is idempotent — `create table if not exists`, `create or replace function`.
+   > **Re-run the whole file after pulling changes** to pick up new functions. `verify.sh` tells
+   > you if something is missing.
 3. Go to **Project Settings → API** and copy:
    - **Project URL** — looks like `https://abcdefgh.supabase.co`
    - **anon public** key — a long JWT
@@ -120,3 +124,40 @@ folding server data in.
 
 **Refresh is a pull-down.** Swipe down on the groups list or inside a group. A failed sync
 shows a quiet strip rather than a dialog, because the local data on screen is still correct.
+
+
+---
+
+## Distributing the app
+
+The APK is published to **GitHub Releases**, and this link always serves the newest build:
+
+```
+https://github.com/kanishk-gangwar/Splits/releases/latest/download/Splits.apk
+```
+
+That works because every release attaches its APK under the same filename, `Splits.apk`.
+Rename the asset and the permalink breaks — so keep the name stable and let the release title
+carry the version.
+
+The landing page at `docs/index.html` wraps that link in a download button, so the friendly
+thing to share is:
+
+```
+https://kanishk-gangwar.github.io/Splits/
+```
+
+Nothing needs redeploying when you ship a new version. Cut a release with an asset named
+`Splits.apk` and both links point at it immediately.
+
+### If you outgrow this
+
+**Google Play** is the step up: automatic updates, no "unknown sources" warning, and no
+scary Play Protect prompt. It costs $25 once and adds a review wait on each release. One thing
+to plan for — Play requires either your upload key or Play App Signing, so enrol before you
+have real users, since changing an app's signing key after release means everyone reinstalls
+from scratch.
+
+**iOS has no free equivalent.** There is no sideloading path comparable to an APK. TestFlight
+and the App Store both require the Apple Developer Program at $99/year. Until then the iOS
+build runs on a simulator or on your own device from Xcode.

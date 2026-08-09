@@ -11,6 +11,9 @@ put together, and more importantly *why* the awkward bits are the way they are.
 - [Data model](#data-model)
 - [Sync](#sync)
 - [Server security model](#server-security-model)
+- [Archived means read-only](#archived-means-read-only)
+- [Filtering by participant](#filtering-by-participant)
+- [Notifications](#notifications)
 - [UI conventions](#ui-conventions)
 - [Build setup and its sharp edges](#build-setup-and-its-sharp-edges)
 - [Testing](#testing)
@@ -49,7 +52,7 @@ composeApp/src/
     sqldelight/…/Splits.sq  schema and every query
   androidMain/              Activity, Application, Android actuals
   iosMain/                  ComposeUIViewController entry point, iOS actuals
-  commonTest/               33 tests over the money and split logic
+  commonTest/               pure-logic tests: money, splits, balances, filtering
 
 iosApp/                     Xcode project hosting the shared UI
 backend/supabase/schema.sql tables, RLS, and the four RPC functions
@@ -214,8 +217,24 @@ about. Pushing first means last-write-wins resolves against complete information
 **Per-row dirty flags.** Every table has a `dirty` column, set on write and cleared after a
 successful push. Only touched rows go up.
 
-**Deletes are tombstones.** Rows are marked `deleted` rather than removed, so other devices
-learn about a deletion on their next pull instead of keeping a ghost group forever.
+**Deletes are tombstones, then reclaimed.** Rows are marked `deleted` rather than removed, so
+other devices learn about a deletion on their next pull instead of keeping a ghost group
+forever. The tombstone *is* the message: a device that has not synced since before the deletion
+pulls `updated_at > watermark`, and if the row were simply gone, nothing in that response would
+tell it to drop its local copy.
+
+So storage is reclaimed on a delay rather than immediately:
+
+- **Share rows go straight away.** They carry no deletion signal of their own — the expense's
+  tombstone already says everything — so they are deleted the moment the expense is, on both
+  the device and the server. In practice this is most of the row count.
+- **Tombstones are purged after 30 days**, by `splits_purge_deleted(retention_days)` on the
+  server and `purgeLocalTombstones` on the device. `SyncEngine` calls both at most once a day,
+  after a successful pull, and swallows failures — reclaiming disk is housekeeping and is not
+  worth failing a sync over. The server function clamps the window to a minimum of 7 days so a
+  caller cannot purge tombstones nobody has seen yet.
+- **Locally, `dirty = 0` guards every purge.** A deletion this device has not managed to push
+  yet is the only record that it happened; purging it would resurrect the row on the next pull.
 
 **`archived` and `hidden` never sync.** They are this device's shelving decisions. If they
 synced, one person archiving a trip would archive it for everyone, and a hidden group would
@@ -266,6 +285,73 @@ tampered client.
 
 ---
 
+## Archived means read-only
+
+Archiving parks a group with its history intact. From 1.0.3 it also freezes it: no new
+expenses, no edits, no participant changes, no settle-up recording, and the group's name,
+emoji and currency are locked.
+
+What stays available is everything that gets you *out* of the state — unarchive, hide, share
+the invite, and (for the admin) delete. Locking those would be a trap.
+
+The check is `group.archived`, applied at three levels rather than one, because hiding a button
+is not the same as preventing an action:
+
+- `GroupScreen` hides the FAB, drops the click handler on every expense row, and hides the
+  settle-up buttons.
+- `GroupSettingsScreen` disables the detail fields and the participant controls, and skips the
+  name autosave.
+- `ExpenseEditorScreen` refuses to enable Save at all. A stale back stack could still land
+  someone on that form, and it is the only place that actually writes.
+
+Archiving is per-device (see [Sync](#sync)), so one person archiving does not freeze the group
+for everyone else.
+
+## Filtering by participant
+
+The expenses tab carries a chip row: *Everyone* plus one chip per member, the device owner
+first because "what was I part of" is the common question.
+
+"Involved" deliberately means **either** direction — they paid for it, or they owe a share of
+it:
+
+```kotlin
+expense.paidByMemberId == filterMemberId ||
+    expense.splits.any { it.memberId == filterMemberId }
+```
+
+Each expense row also shows an avatar stack of everyone in that entry, so you can see who is
+involved without opening it. When the split covers the whole group it collapses to the word
+"everyone" rather than listing every name.
+
+## Notifications
+
+Local notifications, raised by `SyncEngine.announce` after a pull discovers expense changes.
+
+`SplitsRepository.applyRemote` returns a list of `ExpenseNotice` describing what actually
+changed, gathered *before* each row is overwritten so the added-versus-updated distinction
+survives. Three guards keep them from becoming noise:
+
+- Expenses this device just pushed are passed in as `ignoreExpenseIds` and skipped — you should
+  never be notified about your own edit coming back.
+- Nothing fires when `lastPulledAt == 0`. A first sync pulls the entire history, and announcing
+  all of it would be useless.
+- One change gets a detailed line; several collapse into a single summary.
+
+Notification ids are derived from the expense id, so editing an entry replaces its earlier
+notification instead of stacking a second one.
+
+**The limitation, stated plainly: these are local notifications, not push.** They arrive when
+the app syncs — on launch, or on pull-to-refresh. A phone with the app closed will not be told
+anything. Real push needs FCM and APNs plus a server holding device tokens, which is beyond
+what a free Supabase project provides. Delivering it would mean a Supabase Edge Function
+triggered on insert, an FCM project, an Apple push key, and a token table.
+
+Android needs the runtime `POST_NOTIFICATIONS` permission from API 33; `MainActivity` asks on
+launch and `showNotification` checks before posting, so a refusal degrades to silence rather
+than a crash. iOS asks through `UNUserNotificationCenter` from the shared entry point. There is
+a toggle in Settings.
+
 ## UI conventions
 
 - **Material 3 with a custom scheme.** Violet primary, mint for "you are owed", coral for "you
@@ -287,6 +373,11 @@ tampered client.
 - **The amount field is pinned outside the scrolling area** in the expense editor. It is the
   one field you always want visible while typing; inside the `LazyColumn` it could scroll away
   or end up behind the save button.
+- **A scrollable list under a bottom bar must include `padding.calculateBottomPadding()` in its
+  `contentPadding`.** Otherwise its viewport runs on behind the bar and the keyboard, and
+  Compose's automatic "scroll the focused field into view" concludes the field is already
+  visible and does nothing. This is what left the exact-split fields hidden behind the keyboard
+  even after the bottom bar itself was fixed — two separate bugs with the same symptom.
 
 ---
 
@@ -322,12 +413,13 @@ it on is a real task with real testing, not a flag flip.
 
 ## Testing
 
-33 tests in `commonTest`, all pure-logic:
+All tests in `commonTest` are pure logic:
 
 | Suite | Covers |
 |---|---|
 | `MoneyTest` | formatting, parsing, even and weighted splits reconciling across many shapes |
 | `SplitPlanTest` | pinned-versus-automatic rows, percent handling, settlement shape |
+| `ExpenseFilterTest` | participant filtering matches both payers and share-holders |
 | `BalancesTest` | reimbursement excluded from total, balances netting to zero, settle-up clearing every debt |
 
 ```bash
@@ -351,6 +443,7 @@ composable a shell over it — that is exactly how `SplitPlan` came to exist.
 - **`observeGroupCards()` loads everything.** Fine now; revisit at a few thousand expenses.
 - **No conflict UI.** Sync resolves silently by last-write-wins. Two people editing the same
   expense offline means one loses without being told.
+- **Notifications only arrive while the app syncs.** See [Notifications](#notifications).
 - **No multi-currency conversion.** Groups are single-currency, and the home screen lists
   positions per currency rather than summing them, because summing rupees and dollars would
   produce a confident wrong number.

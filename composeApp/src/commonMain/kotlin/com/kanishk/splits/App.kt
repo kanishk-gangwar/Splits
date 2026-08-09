@@ -24,6 +24,7 @@ import androidx.navigation.toRoute
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kanishk.splits.data.SplitsRepository
 import com.kanishk.splits.data.createSqlDriver
+import com.kanishk.splits.data.requestNotificationPermission
 import com.kanishk.splits.data.sync.SyncEngine
 import com.kanishk.splits.db.SplitsDatabase
 import com.kanishk.splits.ui.CreateGroupRoute
@@ -60,7 +61,10 @@ fun App() {
 
     // Catch up with the server once on launch. Failing here is silent by design: the UI is
     // already rendering local data, and pull-to-refresh gives the user an explicit retry.
-    LaunchedEffect(Unit) { syncEngine.syncNow() }
+    LaunchedEffect(Unit) {
+        requestNotificationPermission()
+        syncEngine.syncNow()
+    }
 
     CompositionLocalProvider(
         LocalRepository provides repository,

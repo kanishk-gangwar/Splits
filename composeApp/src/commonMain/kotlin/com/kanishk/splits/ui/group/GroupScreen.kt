@@ -13,12 +13,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material3.Button
@@ -52,11 +54,13 @@ import com.kanishk.splits.model.ReimbursementCategory
 import com.kanishk.splits.model.dayKey
 import com.kanishk.splits.model.formatDayHeader
 import com.kanishk.splits.model.formatMinor
+import com.kanishk.splits.model.involving
 import com.kanishk.splits.model.resolveCategory
 import com.kanishk.splits.model.summarise
 import com.kanishk.splits.ui.components.Avatar
 import com.kanishk.splits.ui.components.AvatarStack
 import com.kanishk.splits.ui.components.EmptyState
+import com.kanishk.splits.ui.components.HSpace
 import com.kanishk.splits.ui.components.GlyphTile
 import com.kanishk.splits.ui.components.MoneyText
 import com.kanishk.splits.ui.components.SectionLabel
@@ -86,6 +90,7 @@ fun GroupScreen(
     var tab by remember { mutableStateOf(0) }
     var showInvite by remember { mutableStateOf(false) }
     var showIdentityPicker by remember { mutableStateOf(false) }
+    var filterMemberId by remember(groupId) { mutableStateOf<String?>(null) }
 
     val current = detail
 
@@ -112,6 +117,11 @@ fun GroupScreen(
     val me = current.meIn(repository.deviceId)
     val summary = remember(current) { summarise(current.members, current.expenses) }
 
+    // An archived group is a closed book: it keeps its history but nothing in it can change
+    // until it is unarchived. Enforced here rather than only hiding buttons, so every entry
+    // point into editing is covered.
+    val readOnly = group.archived
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -137,13 +147,15 @@ fun GroupScreen(
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = onAddExpense,
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-            ) {
-                Icon(Icons.Outlined.Add, contentDescription = null)
-                Text("Add expense", modifier = Modifier.padding(start = 8.dp))
+            if (!readOnly) {
+                ExtendedFloatingActionButton(
+                    onClick = onAddExpense,
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                ) {
+                    Icon(Icons.Outlined.Add, contentDescription = null)
+                    Text("Add expense", modifier = Modifier.padding(start = 8.dp))
+                }
             }
         },
     ) { padding ->
@@ -162,7 +174,11 @@ fun GroupScreen(
                 )
             }
 
-            if (me == null) {
+            if (readOnly) {
+                item { ArchivedBanner(onOpenSettings = onOpenGroupSettings) }
+            }
+
+            if (me == null && !readOnly) {
                 item {
                     IdentityPrompt(onPick = { showIdentityPicker = true })
                 }
@@ -178,9 +194,22 @@ fun GroupScreen(
             }
 
             if (tab == 0) {
+                if (current.members.size > 1 && current.expenses.isNotEmpty()) {
+                    item {
+                        ParticipantFilterRow(
+                            detail = current,
+                            myMemberId = me?.id,
+                            selectedId = filterMemberId,
+                            onSelect = { filterMemberId = it },
+                        )
+                    }
+                }
+
                 expensesTab(
                     detail = current,
                     myMemberId = me?.id,
+                    filterMemberId = filterMemberId,
+                    readOnly = readOnly,
                     onEditExpense = onEditExpense,
                 )
             } else {
@@ -188,6 +217,7 @@ fun GroupScreen(
                     detail = current,
                     summary = summary,
                     myMemberId = me?.id,
+                    readOnly = readOnly,
                     onSettleUp = onSettleUp,
                 )
             }
@@ -288,6 +318,112 @@ private fun GroupHeaderCard(
     }
 }
 
+/** Says plainly why nothing on this screen can be changed, and how to undo it. */
+@Composable
+private fun ArchivedBanner(onOpenSettings: () -> Unit) {
+    SplitsCard(
+        Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        onClick = onOpenSettings,
+    ) {
+        Row(
+            Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Outlined.Archive,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+            Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                Text(
+                    "Archived — read only",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    "The history is all here, but nothing can be added or changed. Unarchive from group settings.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/** Filter the list down to one person's involvement — what they paid for, or owe a share of. */
+@Composable
+private fun ParticipantFilterRow(
+    detail: GroupDetail,
+    myMemberId: String?,
+    selectedId: String?,
+    onSelect: (String?) -> Unit,
+) {
+    // Put whoever is using the phone first: "what was I part of" is the common question.
+    val ordered = detail.members.sortedWith(
+        compareByDescending<Member> { it.id == myMemberId }.thenBy { it.name.lowercase() }
+    )
+
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            FilterChipPill(
+                label = "Everyone",
+                selected = selectedId == null,
+                onClick = { onSelect(null) },
+            )
+        }
+        items(ordered, key = { it.id }) { member ->
+            FilterChipPill(
+                label = if (member.id == myMemberId) "${member.name} (you)" else member.name,
+                selected = member.id == selectedId,
+                colorIndex = member.colorIndex,
+                onClick = { onSelect(if (member.id == selectedId) null else member.id) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun FilterChipPill(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    colorIndex: Int? = null,
+) {
+    val tint = if (colorIndex != null) {
+        com.kanishk.splits.ui.theme.avatarColor(colorIndex)
+    } else {
+        MaterialTheme.colorScheme.primary
+    }
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (selected) tint.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceContainer
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (colorIndex != null) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(tint),
+            )
+            HSpace(7.dp)
+        }
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (selected) tint else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+    }
+}
+
 @Composable
 private fun IdentityPrompt(onPick: () -> Unit) {
     SplitsCard(
@@ -320,6 +456,8 @@ private fun IdentityPrompt(onPick: () -> Unit) {
 private fun androidx.compose.foundation.lazy.LazyListScope.expensesTab(
     detail: GroupDetail,
     myMemberId: String?,
+    filterMemberId: String?,
+    readOnly: Boolean,
     onEditExpense: (String) -> Unit,
 ) {
     if (detail.expenses.isEmpty()) {
@@ -327,13 +465,31 @@ private fun androidx.compose.foundation.lazy.LazyListScope.expensesTab(
             EmptyState(
                 glyph = "💸",
                 title = "No expenses yet",
-                subtitle = "Add the first one and everyone's share is worked out for you.",
+                subtitle = if (readOnly) {
+                    "This group was archived before anything was added to it."
+                } else {
+                    "Add the first one and everyone's share is worked out for you."
+                },
             )
         }
         return
     }
 
-    val sections = detail.expenses.groupBy { dayKey(it.occurredAt) }
+    // "Involved" means they either paid for it or owe a share of it — see Expense.involves.
+    val visible = detail.expenses.involving(filterMemberId)
+
+    if (visible.isEmpty()) {
+        item {
+            EmptyState(
+                glyph = "🔍",
+                title = "Nothing here for ${detail.member(filterMemberId)?.name ?: "them"}",
+                subtitle = "They haven't paid for anything or owed a share in this group yet.",
+            )
+        }
+        return
+    }
+
+    val sections = visible.groupBy { dayKey(it.occurredAt) }
         .toList()
         .sortedByDescending { it.first }
 
@@ -351,7 +507,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.expensesTab(
                 expense = expense,
                 detail = detail,
                 myMemberId = myMemberId,
-                onClick = { onEditExpense(expense.id) },
+                onClick = if (readOnly) null else ({ onEditExpense(expense.id) }),
             )
         }
     }
@@ -362,7 +518,7 @@ private fun ExpenseRow(
     expense: Expense,
     detail: GroupDetail,
     myMemberId: String?,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)?,
 ) {
     val currency = detail.group.currencyCode
     val payer = detail.member(expense.paidByMemberId)
@@ -411,6 +567,27 @@ private fun ExpenseRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+
+                // Who this entry actually involves, without having to open it.
+                val involved = expense.splits.mapNotNull { detail.member(it.memberId) }
+                if (involved.isNotEmpty()) {
+                    VSpace(6.dp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AvatarStack(involved, max = 5, size = 20.dp)
+                        Text(
+                            text = if (involved.size == detail.members.size) {
+                                "  everyone"
+                            } else {
+                                "  " + involved.joinToString(", ") { it.name.substringBefore(' ') }
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
 
             Column(horizontalAlignment = Alignment.End) {
@@ -465,6 +642,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.balancesTab(
     detail: GroupDetail,
     summary: com.kanishk.splits.model.GroupSummary,
     myMemberId: String?,
+    readOnly: Boolean,
     onSettleUp: (String, String, Long) -> Unit,
 ) {
     val currency = detail.group.currencyCode
@@ -558,16 +736,18 @@ private fun androidx.compose.foundation.lazy.LazyListScope.balancesTab(
                         )
                     }
 
-                    TextButton(
-                        onClick = {
-                            onSettleUp(
-                                settlement.fromMemberId,
-                                settlement.toMemberId,
-                                settlement.amountMinor,
-                            )
-                        },
-                    ) {
-                        Text("Record")
+                    if (!readOnly) {
+                        TextButton(
+                            onClick = {
+                                onSettleUp(
+                                    settlement.fromMemberId,
+                                    settlement.toMemberId,
+                                    settlement.amountMinor,
+                                )
+                            },
+                        ) {
+                            Text("Record")
+                        }
                     }
                 }
             }

@@ -187,7 +187,10 @@ fun ExpenseEditorScreen(
     val splitTotal = computedSplits.sumOf { it.shareMinor }
     val splitBalanced = splitTotal == amountMinor
 
-    val canSave = amountMinor > 0 &&
+    // Last line of defence: the group screen already hides every route in here when the group
+    // is archived, but a stale back stack could still land someone on this form.
+    val canSave = !current.group.archived &&
+        amountMinor > 0 &&
         paidBy != null &&
         computedSplits.isNotEmpty() &&
         splitBalanced &&
@@ -278,7 +281,15 @@ fun ExpenseEditorScreen(
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                // Reserve the bottom bar *and* the keyboard. Without this the list's
+                // viewport runs on behind them, so Compose believes a focused split field is
+                // already visible and never scrolls it up — which is what left the exact
+                // amounts hidden while typing.
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    bottom = padding.calculateBottomPadding() + 24.dp,
+                ),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
             item {

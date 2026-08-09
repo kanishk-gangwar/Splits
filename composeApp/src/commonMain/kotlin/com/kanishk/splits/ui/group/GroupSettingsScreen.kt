@@ -92,6 +92,10 @@ fun GroupSettingsScreen(
     val me = current.meIn(repository.deviceId)
     val isAdmin = current.isAdmin(repository.deviceId)
 
+    // Archived means read-only. Archiving, hiding, sharing and deleting stay available —
+    // those are how you get *out* of the state, so locking them would be a trap.
+    val readOnly = group.archived
+
     var name by remember(group.id) { mutableStateOf(group.name) }
     var emoji by remember(group.id) { mutableStateOf(group.emoji) }
     var currency by remember(group.id) { mutableStateOf(group.currencyCode) }
@@ -106,9 +110,36 @@ fun GroupSettingsScreen(
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()),
-            contentPadding = PaddingValues(16.dp),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 16.dp,
+                bottom = padding.calculateBottomPadding() + 16.dp,
+            ),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
+            if (readOnly) {
+                item {
+                    SplitsCard(
+                        Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text(
+                                "This group is archived",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                "Details and participants are locked. Unarchive below to make changes.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+
             item {
                 Column {
                     SectionLabel("Icon")
@@ -138,7 +169,7 @@ fun GroupSettingsScreen(
                                             Modifier
                                         }
                                     )
-                                    .clickable {
+                                    .clickable(enabled = !readOnly) {
                                         emoji = candidate
                                         persistGroup()
                                     },
@@ -157,6 +188,7 @@ fun GroupSettingsScreen(
                     onValueChange = { name = it },
                     label = { Text("Group name") },
                     singleLine = true,
+                    enabled = !readOnly,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -179,7 +211,7 @@ fun GroupSettingsScreen(
                                             MaterialTheme.colorScheme.surfaceContainer
                                         }
                                     )
-                                    .clickable {
+                                    .clickable(enabled = !readOnly) {
                                         currency = option.code
                                         persistGroup()
                                     }
@@ -203,13 +235,15 @@ fun GroupSettingsScreen(
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     SectionLabel("Participants", Modifier.weight(1f))
-                    TextButton(onClick = { showAddMember = true }) {
-                        Icon(
-                            Icons.Outlined.PersonAddAlt,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Text("Add", Modifier.padding(start = 6.dp))
+                    if (!readOnly) {
+                        TextButton(onClick = { showAddMember = true }) {
+                            Icon(
+                                Icons.Outlined.PersonAddAlt,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text("Add", Modifier.padding(start = 6.dp))
+                        }
                     }
                 }
             }
@@ -243,7 +277,10 @@ fun GroupSettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        IconButton(onClick = { renaming = member.id to member.name }) {
+                        IconButton(
+                            onClick = { renaming = member.id to member.name },
+                            enabled = !readOnly,
+                        ) {
                             Icon(
                                 Icons.Outlined.Edit,
                                 contentDescription = "Rename ${member.name}",
@@ -258,7 +295,7 @@ fun GroupSettingsScreen(
                                     if (!removed) removeBlocked = member.name
                                 }
                             },
-                            enabled = member.id != group.adminMemberId,
+                            enabled = !readOnly && member.id != group.adminMemberId,
                         ) {
                             Icon(
                                 Icons.Outlined.DeleteOutline,
@@ -344,7 +381,7 @@ fun GroupSettingsScreen(
 
     // The name field has no Save button, so it autosaves once typing pauses.
     LaunchedEffect(name) {
-        if (name.isNotBlank() && name != group.name) {
+        if (!readOnly && name.isNotBlank() && name != group.name) {
             delay(400)
             repository.updateGroup(groupId, name, emoji, currency)
         }

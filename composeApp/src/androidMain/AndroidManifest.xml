@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Local notifications when a sync pull finds someone else's changes. Runtime-granted
+         from Android 13; the app degrades to silence if refused. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".SplitsApplication"
         android:allowBackup="true"

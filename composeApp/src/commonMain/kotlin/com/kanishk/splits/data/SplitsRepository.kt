@@ -35,6 +35,8 @@ private const val PREF_DEVICE_ID = "device_id"
 private const val PREF_DISPLAY_NAME = "display_name"
 private const val PREF_THEME = "theme_mode"
 private const val PREF_LAST_PULL = "last_pulled_at"
+private const val PREF_NOTIFICATIONS = "notifications_enabled"
+private const val PREF_LAST_PURGE = "last_purge_at"
 
 class SplitsRepository(
     private val database: SplitsDatabase,
@@ -58,6 +60,18 @@ class SplitsRepository(
 
     suspend fun setDisplayName(name: String) = withContext(dispatcher) {
         queries.upsertPref(PREF_DISPLAY_NAME, name.trim())
+    }
+
+    fun observeNotificationsEnabled(): Flow<Boolean> =
+        queries.selectPref(PREF_NOTIFICATIONS).asFlow().mapToOneOrNull(dispatcher)
+            .map { it != "false" }
+
+    suspend fun notificationsEnabled(): Boolean = withContext(dispatcher) {
+        queries.selectPref(PREF_NOTIFICATIONS).executeAsOneOrNull() != "false"
+    }
+
+    suspend fun setNotificationsEnabled(enabled: Boolean) = withContext(dispatcher) {
+        queries.upsertPref(PREF_NOTIFICATIONS, enabled.toString())
     }
 
     fun observeThemeMode(): Flow<String> =
@@ -276,7 +290,12 @@ class SplitsRepository(
     }
 
     suspend fun deleteExpense(expenseId: String) = withContext(dispatcher) {
-        queries.softDeleteExpense(nowMillis(), expenseId)
+        database.transaction {
+            queries.softDeleteExpense(nowMillis(), expenseId)
+            // The tombstone is what other devices need; the share rows are dead weight and go
+            // immediately, here and on the server.
+            queries.deleteSplitsOfExpense(expenseId)
+        }
     }
 
     // ------------------------------------------------------- shelf & lifecycle --
@@ -385,7 +404,12 @@ class SplitsRepository(
      * device's shelving decisions and must survive a pull, or every refresh would drag hidden
      * groups back onto the user's list.
      */
-    suspend fun applyRemote(snapshot: RemoteSnapshot) = withContext(dispatcher) {
+    suspend fun applyRemote(
+        snapshot: RemoteSnapshot,
+        ignoreExpenseIds: Set<String> = emptySet(),
+    ): List<ExpenseNotice> = withContext(dispatcher) {
+        val notices = mutableListOf<ExpenseNotice>()
+
         database.transaction {
             snapshot.groups.forEach { remote ->
                 val local = queries.selectGroupById(remote.id).executeAsOneOrNull()
@@ -427,6 +451,38 @@ class SplitsRepository(
             snapshot.expenses.forEach { remote ->
                 val local = queries.selectExpenseById(remote.id).executeAsOneOrNull()
                 if (local != null && local.updatedAt > remote.updatedAt) return@forEach
+
+                // Work out what to tell the user *before* the row is overwritten, and skip
+                // anything this device just pushed — you should not be notified of your own
+                // edit coming back to you.
+                if (remote.id !in ignoreExpenseIds) {
+                    val kind = when {
+                        remote.deleted -> NoticeKind.Removed
+                        local == null -> NoticeKind.Added
+                        else -> NoticeKind.Updated
+                    }
+                    val changed = local == null || local.updatedAt != remote.updatedAt ||
+                        local.deleted != remote.deleted
+                    if (changed) {
+                        val group = queries.selectGroupById(remote.groupId).executeAsOneOrNull()
+                        val actor = queries.selectMemberById(remote.paidByMemberId)
+                            .executeAsOneOrNull()
+                        if (group != null) {
+                            notices += ExpenseNotice(
+                                expenseId = remote.id,
+                                groupId = remote.groupId,
+                                groupName = group.name,
+                                groupEmoji = group.emoji,
+                                title = remote.title,
+                                amountMinor = remote.amountMinor,
+                                currencyCode = group.currencyCode,
+                                actorName = actor?.name ?: "Someone",
+                                kind = kind,
+                            )
+                        }
+                    }
+                }
+
                 queries.upsertExpense(
                     id = remote.id,
                     groupId = remote.groupId,
@@ -448,6 +504,31 @@ class SplitsRepository(
                     queries.insertSplit(remote.id, share.memberId, share.shareMinor)
                 }
             }
+        }
+
+        notices
+    }
+
+    suspend fun lastPurgeAt(): Long = withContext(dispatcher) {
+        queries.selectPref(PREF_LAST_PURGE).executeAsOneOrNull()?.toLongOrNull() ?: 0L
+    }
+
+    suspend fun setLastPurgeAt(value: Long) = withContext(dispatcher) {
+        queries.upsertPref(PREF_LAST_PURGE, value.toString())
+    }
+
+    /**
+     * Drops local tombstones that have aged past [cutoffMillis], plus any orphaned shares.
+     *
+     * Rows still marked dirty are left alone however old they are: a deletion that has not been
+     * pushed yet is the only record that it happened.
+     */
+    suspend fun purgeLocalTombstones(cutoffMillis: Long) = withContext(dispatcher) {
+        database.transaction {
+            queries.purgeOrphanSplits()
+            queries.purgeDeletedExpenses(cutoffMillis)
+            queries.purgeDeletedMembers(cutoffMillis)
+            queries.purgeDeletedGroups(cutoffMillis)
         }
     }
 

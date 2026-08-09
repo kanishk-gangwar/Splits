@@ -37,6 +37,10 @@ class SplitsApi(
     suspend fun deleteGroup(groupId: String, deviceId: String): Result<RpcResult> =
         rpc("splits_delete_group", DeleteGroupArgs(groupId, deviceId))
 
+    /** Hard-deletes tombstones that have aged past the retention window. */
+    suspend fun purgeDeleted(retentionDays: Int): Result<RpcResult> =
+        rpc("splits_purge_deleted", PurgeArgs(retentionDays))
+
     private suspend inline fun <reified Args, reified Out> rpc(
         function: String,
         args: Args,

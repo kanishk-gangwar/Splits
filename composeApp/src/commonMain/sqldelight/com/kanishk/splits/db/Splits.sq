@@ -207,6 +207,28 @@ DELETE FROM splitEntity WHERE expenseId = ?;
 deleteSplitsOfGroup:
 DELETE FROM splitEntity WHERE expenseId IN (SELECT id FROM expenseEntity WHERE groupId = ?);
 
+-- ---------------------------------------------------------------- purge ----
+
+-- Reclaims local storage from tombstones. The `dirty = 0` guard is load-bearing: a deletion
+-- this device has not managed to push yet must survive, or the server would never hear about
+-- it and the row would come back on the next pull.
+
+purgeDeletedExpenses:
+DELETE FROM expenseEntity WHERE deleted = 1 AND dirty = 0 AND updatedAt < ?;
+
+purgeDeletedMembers:
+DELETE FROM memberEntity WHERE deleted = 1 AND dirty = 0 AND updatedAt < ?;
+
+purgeDeletedGroups:
+DELETE FROM groupEntity WHERE deleted = 1 AND dirty = 0 AND updatedAt < ?;
+
+-- Shares carry no deletion signal of their own, so they go as soon as their expense is
+-- tombstoned rather than waiting out the retention window.
+purgeOrphanSplits:
+DELETE FROM splitEntity
+WHERE expenseId IN (SELECT id FROM expenseEntity WHERE deleted = 1)
+   OR expenseId NOT IN (SELECT id FROM expenseEntity);
+
 -- ----------------------------------------------------------- preferences ----
 
 CREATE TABLE prefEntity (

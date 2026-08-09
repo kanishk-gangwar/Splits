@@ -39,6 +39,14 @@
   }
   .item h2 { font-size: 15px; margin: 0 0 4px; letter-spacing: -0.2px; }
   .item p { margin: 0; color: var(--muted); font-size: 14px; }
+  .download {
+    display: block; text-decoration: none;
+    background: linear-gradient(135deg, var(--violet), var(--violet-2));
+    color: #fff; border-radius: 18px; padding: 18px 22px; margin-bottom: 12px;
+  }
+  .download-main { display: block; font-size: 17px; font-weight: 650; letter-spacing: -0.2px; }
+  .download-sub { display: block; font-size: 13px; opacity: 0.82; margin-top: 2px; }
+  .note { color: var(--muted); font-size: 13px; margin: 0 0 30px; line-height: 1.55; }
   footer { margin-top: 36px; color: var(--muted); font-size: 14px; }
   a { color: var(--violet); }
   @media (prefers-color-scheme: dark) { a { color: #b9a6ff; } }
@@ -51,6 +59,17 @@
     <p class="lede">
       Split expenses with friends on Android and iOS. No accounts, no phone numbers —
       share a link and everyone picks their own name.
+    </p>
+
+    <a class="download" href="https://github.com/kanishk-gangwar/Splits/releases/latest/download/Splits.apk">
+      <span class="download-main">Download for Android</span>
+      <span class="download-sub">Always the latest release · Android 8.0+</span>
+    </a>
+    <p class="note">
+      Open the file on your phone to install. Android will ask you to allow installs from your
+      browser the first time, and warn that the app isn't from the Play Store — that's expected
+      for a directly distributed app.
+      <a href="https://github.com/kanishk-gangwar/Splits/releases">All releases and changelogs →</a>
     </p>
 
     <div class="grid">

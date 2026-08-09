@@ -17,6 +17,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -50,6 +51,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val savedName by repository.observeDisplayName().collectAsStateWithLifecycle("")
     val themePref by repository.observeThemeMode().collectAsStateWithLifecycle("system")
     val hiddenGroups by repository.observeHiddenGroups().collectAsStateWithLifecycle(emptyList())
+    val notificationsOn by repository.observeNotificationsEnabled().collectAsStateWithLifecycle(true)
 
     var nameField by remember { mutableStateOf<String?>(null) }
     val displayedName = nameField ?: savedName
@@ -69,7 +71,12 @@ fun SettingsScreen(onBack: () -> Unit) {
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()),
-            contentPadding = PaddingValues(16.dp),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 16.dp,
+                bottom = padding.calculateBottomPadding() + 16.dp,
+            ),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             item {
@@ -107,6 +114,45 @@ fun SettingsScreen(onBack: () -> Unit) {
                             }
                         },
                         modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+
+            item {
+                Column {
+                    SectionLabel("Notifications")
+                    VSpace(10.dp)
+                    SplitsCard(Modifier.fillMaxWidth()) {
+                        Row(
+                            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Group activity",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    "Tell me when someone adds or edits an expense",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = notificationsOn,
+                                onCheckedChange = { enabled ->
+                                    scope.launch { repository.setNotificationsEnabled(enabled) }
+                                },
+                            )
+                        }
+                    }
+                    VSpace(6.dp)
+                    Text(
+                        "These arrive when the app syncs — on launch, or when you pull down to " +
+                            "refresh. Alerts while the app is closed would need a push service.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

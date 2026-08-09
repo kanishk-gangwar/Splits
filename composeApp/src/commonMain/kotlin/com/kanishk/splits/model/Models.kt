@@ -85,3 +85,16 @@ data class GroupDetail(
         return group.adminMemberId == me.id
     }
 }
+
+/**
+ * Whether [memberId] had anything to do with this entry.
+ *
+ * Both directions count: they either paid for it, or they owe a share of it. Filtering on only
+ * one of those would quietly hide half of what someone was involved in.
+ */
+fun Expense.involves(memberId: String): Boolean =
+    paidByMemberId == memberId || splits.any { it.memberId == memberId }
+
+/** Filters to one member's involvement. A null id means "everyone", i.e. no filtering. */
+fun List<Expense>.involving(memberId: String?): List<Expense> =
+    if (memberId == null) this else filter { it.involves(memberId) }

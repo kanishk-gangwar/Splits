@@ -1,8 +1,12 @@
 package com.kanishk.splits.data.sync
 
+import com.kanishk.splits.data.ExpenseNotice
+import com.kanishk.splits.data.NoticeKind
 import com.kanishk.splits.data.SplitsRepository
 import com.kanishk.splits.data.remote.SplitsApi
 import com.kanishk.splits.data.remote.SyncNotConfigured
+import com.kanishk.splits.data.showNotification
+import com.kanishk.splits.model.formatMinor
 import com.kanishk.splits.model.nowMillis
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +24,20 @@ sealed interface SyncStatus {
     data class Synced(val at: Long) : SyncStatus
     data class Failed(val message: String) : SyncStatus
 }
+
+private const val SUMMARY_NOTIFICATION_ID = 1
+
+/**
+ * How long a tombstone survives before its storage is reclaimed.
+ *
+ * This is not arbitrary. A device that has not synced since before a deletion learns about it
+ * only from the tombstone: it pulls `updated_at > watermark`, and if the row is simply gone,
+ * nothing in the response tells it to drop its local copy. The window has to comfortably
+ * exceed the longest realistic gap between one person opening the app and the next.
+ */
+private const val TOMBSTONE_RETENTION_DAYS = 30
+private const val PURGE_INTERVAL_MILLIS = 24L * 60 * 60 * 1000
+private const val DAY_MILLIS = 24L * 60 * 60 * 1000
 
 sealed interface JoinResult {
     data class Found(val groupId: String) : JoinResult
@@ -69,11 +87,24 @@ class SyncEngine(
                 val since = repository.lastPulledAt()
                 val snapshot = api.pull(groupIds, since).getOrThrow()
                 if (!snapshot.isEmpty) {
-                    repository.applyRemote(snapshot)
+                    val notices = repository.applyRemote(
+                        snapshot = snapshot,
+                        // Anything we just uploaded is our own work coming back.
+                        ignoreExpenseIds = pending.expenses.map { it.id }.toSet(),
+                    )
                     val watermark = repository.watermarkOf(snapshot)
                     if (watermark > since) repository.setLastPulledAt(watermark)
+
+                    // A first sync pulls the entire history. Announcing all of it would be
+                    // noise, so notifications only start once there is a watermark to be
+                    // newer than.
+                    if (since > 0 && notices.isNotEmpty() && repository.notificationsEnabled()) {
+                        announce(notices)
+                    }
                 }
             }
+
+            reclaimStorageIfDue()
         }
 
         val result = outcome.fold(
@@ -88,6 +119,54 @@ class SyncEngine(
         )
         _status.value = result
         result
+    }
+
+    /**
+     * Hard-deletes aged tombstones on both sides, at most once a day.
+     *
+     * Runs after the pull rather than before it, so this device has already seen whatever the
+     * server was holding. Failures are swallowed: reclaiming disk is housekeeping, and it is
+     * not worth reporting a sync as failed over.
+     */
+    private suspend fun reclaimStorageIfDue() {
+        val now = nowMillis()
+        if (now - repository.lastPurgeAt() < PURGE_INTERVAL_MILLIS) return
+
+        runCatching {
+            api.purgeDeleted(TOMBSTONE_RETENTION_DAYS)
+            repository.purgeLocalTombstones(now - TOMBSTONE_RETENTION_DAYS * DAY_MILLIS)
+            repository.setLastPurgeAt(now)
+        }
+    }
+
+    /**
+     * Turns what changed into notifications. One change gets the detail; several get a single
+     * summary, because a burst of individual notifications for one refresh is unusable.
+     */
+    private fun announce(notices: List<ExpenseNotice>) {
+        if (notices.size == 1) {
+            val notice = notices.first()
+            val verb = when (notice.kind) {
+                NoticeKind.Added -> "added"
+                NoticeKind.Updated -> "updated"
+                NoticeKind.Removed -> "removed"
+            }
+            val amount = formatMinor(notice.amountMinor, notice.currencyCode)
+            showNotification(
+                id = notice.expenseId.hashCode(),
+                title = "${'$'}{notice.groupEmoji}  ${'$'}{notice.groupName}",
+                body = "${'$'}{notice.actorName} ${'$'}verb \"${'$'}{notice.title}\" · ${'$'}amount",
+            )
+            return
+        }
+
+        val groups = notices.map { it.groupName }.distinct()
+        val where = if (groups.size == 1) groups.first() else "${'$'}{groups.size} groups"
+        showNotification(
+            id = SUMMARY_NOTIFICATION_ID,
+            title = "Splits",
+            body = "${'$'}{notices.size} updates in ${'$'}where",
+        )
     }
 
     /**

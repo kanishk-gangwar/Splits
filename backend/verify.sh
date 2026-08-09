@@ -138,6 +138,19 @@ else
   bad "cleanup failed, remove group $GID by hand: $gone"
 fi
 
+# ------------------------------------------------------------------- purge --
+
+say ""
+say "Storage"
+purge=$(rpc splits_purge_deleted '{"p_retention_days":30}')
+if printf '%s' "$purge" | grep -q '"ok":[ ]*true'; then
+  ok "splits_purge_deleted runs — tombstones are reclaimed after the retention window"
+elif printf '%s' "$purge" | grep -qi 'could not find\|does not exist\|PGRST202'; then
+  bad "splits_purge_deleted is missing — re-run backend/supabase/schema.sql"
+else
+  bad "splits_purge_deleted failed: $purge"
+fi
+
 say ""
 if [ "$fail" -eq 0 ]; then
   say "All $pass checks passed. Rebuild the app and pull down to refresh."

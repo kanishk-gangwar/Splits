@@ -109,3 +109,8 @@ data class RpcResult(
     val ok: Boolean = false,
     val reason: String? = null,
 )
+
+@Serializable
+internal data class PurgeArgs(
+    @SerialName("p_retention_days") val retentionDays: Int,
+)
