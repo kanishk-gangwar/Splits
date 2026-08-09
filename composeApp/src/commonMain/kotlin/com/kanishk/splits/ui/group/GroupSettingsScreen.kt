@@ -250,11 +250,11 @@ fun GroupSettingsScreen(
                         }
                     }
                     // Say why the buttons are missing rather than leaving people hunting for
-                    // them. The admin needs no note: their row is the only one they can rename
-                    // and every other row is theirs to remove.
+                    // them. The admin needs no note — every control is on every row for them.
                     if (!isAdmin) {
                         Text(
-                            "You can rename yourself. Only the group admin can remove participants.",
+                            "You can rename yourself. Only the group admin can rename other " +
+                                "participants or remove them.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 4.dp),

@@ -86,12 +86,16 @@ data class GroupDetail(
     }
 
     /**
-     * Your name is yours to fix, and only yours. A name is how someone is addressed all over
-     * this group, so retyping somebody else's is not a thing anyone gets to do — not even the
-     * admin, whose extra rights are about the group, not about other people's identities.
+     * Your own name is always yours to fix. Everyone else's is the admin's business only —
+     * they are the one who typed the participant list in the first place, so somebody has to
+     * be able to correct a name that its owner has not turned up to claim yet.
+     *
+     * What this rules out is the middle case: an ordinary member retyping another member's
+     * name. A name is how someone is addressed all over the group, so it is not up to whoever
+     * happens to have the screen open.
      */
     fun canRename(deviceId: String?, memberId: String): Boolean =
-        meIn(deviceId)?.id == memberId
+        meIn(deviceId)?.id == memberId || isAdmin(deviceId)
 
     /**
      * Removing a participant is an admin-only action: it takes someone out of a shared group,

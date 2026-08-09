@@ -105,7 +105,8 @@ class MembershipTest {
     }
 
     @Test
-    fun `only your own name is yours to rename`() {
+    fun `an ordinary member can rename themselves and nobody else`() {
+        // "aarav" is the admin, and this device is not holding that name.
         val group = detail(
             member("aarav", claimedBy = OTHER_DEVICE),
             member("bhavna", claimedBy = MY_DEVICE),
@@ -114,15 +115,23 @@ class MembershipTest {
 
         assertTrue(group.canRename(MY_DEVICE, "bhavna"))
         assertFalse(group.canRename(MY_DEVICE, "aarav"), "cannot retype somebody else's name")
-        assertFalse(group.canRename(MY_DEVICE, "chetan"), "an unclaimed name is nobody's to edit")
+        assertFalse(group.canRename(MY_DEVICE, "chetan"), "not even an unclaimed one")
         assertFalse(group.canRename(null, "bhavna"))
     }
 
     @Test
-    fun `being admin does not extend to renaming other people`() {
-        val group = detail(member("aarav", claimedBy = MY_DEVICE), member("bhavna"))
+    fun `the admin can rename anybody`() {
+        val group = detail(
+            member("aarav", claimedBy = MY_DEVICE),
+            member("bhavna", claimedBy = OTHER_DEVICE),
+            member("chetan"),
+        )
         assertTrue(group.isAdmin(MY_DEVICE))
-        assertFalse(group.canRename(MY_DEVICE, "bhavna"))
+
+        assertTrue(group.canRename(MY_DEVICE, "aarav"))
+        assertTrue(group.canRename(MY_DEVICE, "bhavna"))
+        // The case this exists for: a typo in someone who has not joined to fix it themselves.
+        assertTrue(group.canRename(MY_DEVICE, "chetan"))
     }
 
     @Test

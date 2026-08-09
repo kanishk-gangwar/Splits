@@ -97,16 +97,15 @@ Consequences, all intentional:
 - **"Admin" is a member id, not a user.** `groupEntity.adminMemberId` points at a member row;
   you are admin if your device has claimed that row. This is what
   `splits_delete_group(p_group_id, p_device_id)` re-checks server-side.
-- **Renaming is self-only; removing is admin-only.** `GroupDetail.canRename` allows exactly the
-  member this device has claimed — a name is how someone is addressed across the whole group,
-  so nobody retypes anybody else's, and being admin does not extend to other people's
-  identities. `GroupDetail.canRemove` is the mirror image: admin only, and never the admin's
-  own row, since a group with no admin has nobody left who can delete it. `GroupSettingsScreen`
-  hides both controls rather than greying them out — a disabled delete on every row reads as
-  "not right now" when the answer is "never yours" — and tells non-admins why they are missing.
-  Known consequence: a participant who has not joined yet has nobody who can fix a typo in
-  their name; widening `canRename` to let the admin edit unclaimed rows is a one-line change if
-  that bites.
+- **Renaming is yourself-or-admin; removing is admin-only.** `GroupDetail.canRename` allows the
+  member this device has claimed, plus anyone at all if this device is the admin — they typed
+  the participant list, so somebody has to be able to fix a name whose owner has not turned up
+  to claim it yet. What it rules out is the middle case: an ordinary member retyping another
+  member's name, which is not up to whoever has the screen open. `GroupDetail.canRemove` is
+  stricter — admin only, and never the admin's own row, since a group with no admin has nobody
+  left who can delete it. `GroupSettingsScreen` hides both controls rather than greying them
+  out (a disabled delete on every row reads as "not right now" when the answer is "never
+  yours") and tells non-admins why they are missing.
 - **Losing the device loses the identity.** There is no recovery. This was the accepted cost of
   not asking for a phone number. Adding optional email recovery later would mean introducing
   Supabase Auth and a `user_id` column alongside `claimed_by_device_id`, not replacing it.
