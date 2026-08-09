@@ -40,18 +40,34 @@ group is re-checked server-side rather than trusted to the client.
 
 ## 2. Point the app at it
 
-Edit
-[`composeApp/src/commonMain/kotlin/com/kanishk/splits/data/remote/SupabaseConfig.kt`](composeApp/src/commonMain/kotlin/com/kanishk/splits/data/remote/SupabaseConfig.kt):
+Add two lines to **`local.properties`** in the project root — the same file that already holds
+your Android SDK path. It is gitignored, so nothing lands in the repo:
 
-```kotlin
-object SupabaseConfig {
-    const val URL: String = "https://abcdefgh.supabase.co"
-    const val ANON_KEY: String = "eyJhbGciOi..."
-}
+```properties
+supabase.url=https://abcdefgh.supabase.co
+supabase.anonKey=eyJhbGciOi...
 ```
 
-Leave them blank and `SyncEngine` reports `Disabled`, the network is never touched, and the
-app runs offline-only. Nothing else changes.
+That's it. A Gradle task bakes those into the app at build time, so rebuild after editing:
+
+```bash
+./gradlew :composeApp:installDebug
+```
+
+Omit the lines entirely and `SyncEngine` reports `Disabled`, the network is never touched, and
+the app runs offline-only. Nothing else changes and nothing crashes.
+
+### Check it worked
+
+```bash
+./backend/verify.sh
+```
+
+This reads the same two properties and exercises the server the way the app does: it confirms
+the functions exist, confirms the anon key **cannot** read tables directly, then creates a
+throwaway group, resolves it by invite code, checks that a non-admin device is refused a
+delete, and cleans up after itself. If something is wrong it tells you which of the three
+setup steps to revisit.
 
 ## 3. GitHub Pages for invite links
 

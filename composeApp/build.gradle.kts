@@ -11,6 +11,51 @@ plugins {
     alias(libs.plugins.sqldelight)
 }
 
+// Supabase credentials come from local.properties, which is gitignored. This keeps the
+// project URL and anon key out of a public repo without the app having to fetch config at
+// runtime. Absent values generate empty strings, which is exactly how sync stays switched off.
+val supabaseProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+
+val generateSupabaseConfig by tasks.registering {
+    val url = supabaseProperties.getProperty("supabase.url", "")
+    val anonKey = supabaseProperties.getProperty("supabase.anonKey", "")
+    val outputDir = layout.buildDirectory.dir("generated/supabase")
+
+    // Declared as inputs so editing local.properties actually re-runs this task.
+    inputs.property("url", url)
+    inputs.property("anonKey", anonKey)
+    outputs.dir(outputDir)
+
+    doLast {
+        val target = outputDir.get().asFile
+            .resolve("com/kanishk/splits/data/remote")
+            .apply { mkdirs() }
+            .resolve("GeneratedConfig.kt")
+
+        // Built by concatenation rather than a template, so there is no ambiguity about
+        // which layer of string interpolation the values belong to.
+        target.writeText(
+            buildString {
+                appendLine("package com.kanishk.splits.data.remote")
+                appendLine()
+                appendLine("// Generated from local.properties by :composeApp:generateSupabaseConfig.")
+                appendLine("// Do not edit and do not commit - this lives under build/.")
+                appendLine("internal object GeneratedConfig {")
+                append("    const val SUPABASE_URL: String = \"")
+                append(url)
+                appendLine("\"")
+                append("    const val SUPABASE_ANON_KEY: String = \"")
+                append(anonKey)
+                appendLine("\"")
+                appendLine("}")
+            }
+        )
+    }
+}
+
 kotlin {
     androidTarget {
         @OptIn(ExperimentalKotlinGradlePluginApi::class)
@@ -32,6 +77,10 @@ kotlin {
     }
 
     sourceSets {
+        commonMain {
+            kotlin.srcDir(generateSupabaseConfig)
+        }
+
         commonMain.dependencies {
             implementation(compose.runtime)
             implementation(compose.foundation)
