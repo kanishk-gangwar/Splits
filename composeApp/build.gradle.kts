@@ -1,5 +1,6 @@
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -79,6 +80,15 @@ kotlin {
     }
 }
 
+// Signing material lives in keystore.properties, which is gitignored. Without it the
+// release build still works — it just falls back to unsigned output.
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val hasReleaseSigning = keystoreProperties.getProperty("storeFile") != null &&
+    rootProject.file(keystoreProperties.getProperty("storeFile", "")).exists()
+
 android {
     namespace = "com.kanishk.splits"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
@@ -97,9 +107,26 @@ android {
         }
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         getByName("release") {
+            // R8 is left off deliberately: the shared Compose/SQLDelight/Ktor stack needs
+            // keep rules that have not been exercised here, and shipping a smaller build
+            // that crashes is worse than shipping a larger one that works.
             isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

@@ -22,3 +22,9 @@ DerivedData/
 *.hmap
 *.ipa
 *.dSYM.zip
+
+# Release signing — never commit these. Losing them means you can never ship an
+# update that upgrades an already-installed copy of the app.
+*.keystore
+*.jks
+keystore.properties
