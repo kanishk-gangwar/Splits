@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AddLink
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Unarchive
 import androidx.compose.material.icons.outlined.VisibilityOff
@@ -50,7 +51,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kanishk.splits.LocalRepository
 import com.kanishk.splits.LocalSyncEngine
+import com.kanishk.splits.appShareMessage
 import com.kanishk.splits.data.overallPosition
+import com.kanishk.splits.data.shareText
 import com.kanishk.splits.model.GroupCard
 import com.kanishk.splits.model.formatMinor
 import com.kanishk.splits.model.formatRelative
@@ -127,6 +130,13 @@ fun GroupsScreen(
                         color = MaterialTheme.colorScheme.onBackground,
                         modifier = Modifier.weight(1f),
                     )
+                    IconButton(onClick = { shareText(appShareMessage()) }) {
+                        Icon(
+                            Icons.Outlined.Share,
+                            contentDescription = "Share the app",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     IconButton(onClick = { showJoinDialog = true }) {
                         Icon(
                             Icons.Outlined.AddLink,

@@ -64,3 +64,16 @@ fun newInviteCode(): String {
 
 fun normaliseInviteCode(raw: String): String =
     raw.trim().uppercase().filter { it in INVITE_ALPHABET }
+
+/**
+ * Lengths a code can legitimately have: [INVITE_CODE_LENGTH] from [newInviteCode], and 8 from
+ * builds before codes were lengthened — those links are still in people's chat histories and
+ * still resolve.
+ *
+ * This lives next to the generator rather than in the parser because it has already drifted
+ * once: lengthening the code without touching `parseInvite`'s `length == 8` check meant every
+ * new invite link parsed as "not an invite" and did nothing at all.
+ */
+private val INVITE_CODE_LENGTHS = setOf(8, INVITE_CODE_LENGTH)
+
+fun isInviteCodeShaped(code: String): Boolean = code.length in INVITE_CODE_LENGTHS
