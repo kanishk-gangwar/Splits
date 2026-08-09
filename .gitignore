@@ -28,3 +28,7 @@ DerivedData/
 *.keystore
 *.jks
 keystore.properties
+
+# Release artefact, staged for `gh release create`. The signed APK is built from
+# source and attached to a release; it has no business in the history.
+Splits.apk
