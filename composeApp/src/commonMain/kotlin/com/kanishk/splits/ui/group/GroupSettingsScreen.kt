@@ -235,17 +235,30 @@ fun GroupSettingsScreen(
             }
 
             item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SectionLabel("Participants", Modifier.weight(1f))
-                    if (!readOnly) {
-                        TextButton(onClick = { showAddMember = true }) {
-                            Icon(
-                                Icons.Outlined.PersonAddAlt,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Text("Add", Modifier.padding(start = 6.dp))
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SectionLabel("Participants", Modifier.weight(1f))
+                        if (!readOnly) {
+                            TextButton(onClick = { showAddMember = true }) {
+                                Icon(
+                                    Icons.Outlined.PersonAddAlt,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text("Add", Modifier.padding(start = 6.dp))
+                            }
                         }
+                    }
+                    // Say why the buttons are missing rather than leaving people hunting for
+                    // them. The admin needs no note: their row is the only one they can rename
+                    // and every other row is theirs to remove.
+                    if (!isAdmin) {
+                        Text(
+                            "You can rename yourself. Only the group admin can remove participants.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 4.dp),
+                        )
                     }
                 }
             }
@@ -279,32 +292,39 @@ fun GroupSettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        IconButton(
-                            onClick = { renaming = member.id to member.name },
-                            enabled = !readOnly,
-                        ) {
-                            Icon(
-                                Icons.Outlined.Edit,
-                                contentDescription = "Rename ${member.name}",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp),
-                            )
+                        // Both controls are hidden rather than disabled when they do not apply.
+                        // A greyed-out delete on every row reads as "not right now"; these are
+                        // never yours to press, and the row is calmer without them.
+                        if (current.canRename(repository.deviceId, member.id)) {
+                            IconButton(
+                                onClick = { renaming = member.id to member.name },
+                                enabled = !readOnly,
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Edit,
+                                    contentDescription = "Rename ${member.name}",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
                         }
-                        IconButton(
-                            onClick = {
-                                scope.launch {
-                                    val removed = repository.removeMember(groupId, member.id)
-                                    if (!removed) removeBlocked = member.name
-                                }
-                            },
-                            enabled = !readOnly && member.id != group.adminMemberId,
-                        ) {
-                            Icon(
-                                Icons.Outlined.DeleteOutline,
-                                contentDescription = "Remove ${member.name}",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp),
-                            )
+                        if (current.canRemove(repository.deviceId, member.id)) {
+                            IconButton(
+                                onClick = {
+                                    scope.launch {
+                                        val removed = repository.removeMember(groupId, member.id)
+                                        if (!removed) removeBlocked = member.name
+                                    }
+                                },
+                                enabled = !readOnly,
+                            ) {
+                                Icon(
+                                    Icons.Outlined.DeleteOutline,
+                                    contentDescription = "Remove ${member.name}",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
                         }
                     }
                 }

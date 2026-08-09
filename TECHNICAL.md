@@ -97,6 +97,16 @@ Consequences, all intentional:
 - **"Admin" is a member id, not a user.** `groupEntity.adminMemberId` points at a member row;
   you are admin if your device has claimed that row. This is what
   `splits_delete_group(p_group_id, p_device_id)` re-checks server-side.
+- **Renaming is self-only; removing is admin-only.** `GroupDetail.canRename` allows exactly the
+  member this device has claimed — a name is how someone is addressed across the whole group,
+  so nobody retypes anybody else's, and being admin does not extend to other people's
+  identities. `GroupDetail.canRemove` is the mirror image: admin only, and never the admin's
+  own row, since a group with no admin has nobody left who can delete it. `GroupSettingsScreen`
+  hides both controls rather than greying them out — a disabled delete on every row reads as
+  "not right now" when the answer is "never yours" — and tells non-admins why they are missing.
+  Known consequence: a participant who has not joined yet has nobody who can fix a typo in
+  their name; widening `canRename` to let the admin edit unclaimed rows is a one-line change if
+  that bites.
 - **Losing the device loses the identity.** There is no recovery. This was the accepted cost of
   not asking for a phone number. Adding optional email recovery later would mean introducing
   Supabase Auth and a `user_id` column alongside `claimed_by_device_id`, not replacing it.
@@ -146,6 +156,19 @@ representable. When the weights land on exactly 100% the shares are reconciled t
 when they do not, shares are computed literally so the over- or under-allocation stays visible
 rather than being silently normalised into a plausible-looking split. The editor surfaces the
 difference as "₹X still unassigned" / "₹X over the total".
+
+**Switching between Exact and Percent restates what is already pinned** (`convertTypedShares`).
+The two modes share one `shareText` map but read it in different units, so without this a row
+pinned at ₹300 on a ₹900 expense would come back as a literal 300% — the strings carried over
+at face value. It converts against the total instead: ₹300 becomes 33.33%, and back again.
+Untouched rows stay empty and therefore stay automatic; a pinned `0` is written out as `"0"`
+rather than blank, since blank would hand that row back to automatic. With no amount typed yet
+there is nothing to convert against, so the pins are dropped rather than reinterpreted.
+
+The editor tracks which units the map currently holds in `shareUnit`, separately from
+`splitMode` — Equally shows no fields at all, so bouncing through it must not lose what was
+typed in Exact. Loading an existing expense fills the map from stored shares, which are money,
+matching the `Exact` default.
 
 ---
 
@@ -608,11 +631,11 @@ All tests in `commonTest` are pure logic:
 | Suite | Covers |
 |---|---|
 | `MoneyTest` | formatting, parsing, even and weighted splits reconciling across many shapes |
-| `SplitPlanTest` | pinned-versus-automatic rows, percent handling, settlement shape |
+| `SplitPlanTest` | pinned-versus-automatic rows, percent handling, restating pins across a mode switch, settlement shape |
 | `ExpenseFilterTest` | participant filtering matches both payers and share-holders |
 | `CategorySuggestTest` | word-boundary matching, plurals, rule precedence, no false positives |
 | `NotificationTextTest` | finished notification strings, including that none contain a raw placeholder |
-| `MembershipTest` | name availability, joined counts, releasing a name, admin following the claim |
+| `MembershipTest` | name availability, joined counts, releasing a name, admin following the claim, who may rename and remove |
 | `BalancesTest` | reimbursement excluded from total, balances netting to zero, settle-up clearing every debt |
 | `IdsTest` | id format the server enforces, invite code length and alphabet, no modulo bias, normalising round-trips |
 

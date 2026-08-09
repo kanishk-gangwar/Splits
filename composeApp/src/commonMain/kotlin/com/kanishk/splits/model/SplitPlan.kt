@@ -78,6 +78,46 @@ fun planSplits(
 }
 
 /**
+ * Re-expresses what has already been typed into the split rows when the user flips between
+ * Exact and Percent.
+ *
+ * Without this the raw strings carry over and get read in the new mode's units: ₹300 pinned on
+ * a ₹900 expense would come back as a literal 300%. What that row means is a third of the bill,
+ * so it becomes 33.33% instead — an existing value seeds the new mode rather than being
+ * reinterpreted.
+ *
+ * Rows the user never touched stay untouched: they are still automatic, and still show their
+ * computed share as a placeholder. With no total to convert against there is nothing to work
+ * from, so the pins are dropped rather than silently carried over at face value.
+ */
+fun convertTypedShares(
+    typed: Map<String, String>,
+    from: SplitMode,
+    to: SplitMode,
+    amountMinor: Long,
+): Map<String, String> {
+    if (from == to || from == SplitMode.Equally || to == SplitMode.Equally) return typed
+    if (typed.isEmpty()) return typed
+    if (amountMinor <= 0) return emptyMap()
+
+    return typed.mapNotNull { (id, text) ->
+        val value = parseAmountToMinor(text) ?: return@mapNotNull null
+        val converted = when (to) {
+            // Money -> hundredths of a percent.
+            SplitMode.Percent -> roundedDiv(value * FULL_PERCENT, amountMinor)
+            // Hundredths of a percent -> money.
+            else -> roundedDiv(amountMinor * value, FULL_PERCENT)
+        }
+        // A pinned zero is an opinion ("this one pays nothing"), and minorToEditText renders 0
+        // as blank — which would hand the row back to automatic. Spell it out instead.
+        id to (if (converted == 0L) "0" else minorToEditText(converted))
+    }.toMap()
+}
+
+private fun roundedDiv(numerator: Long, denominator: Long): Long =
+    if (denominator == 0L) 0L else (numerator + denominator / 2) / denominator
+
+/**
  * The rows the user actually typed a number into. A blank field counts as untouched, so
  * clearing a value returns that row to automatic distribution.
  */

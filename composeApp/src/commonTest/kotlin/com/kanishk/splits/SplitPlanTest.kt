@@ -2,6 +2,7 @@ package com.kanishk.splits
 
 import com.kanishk.splits.model.ExpenseKind
 import com.kanishk.splits.model.SplitMode
+import com.kanishk.splits.model.convertTypedShares
 import com.kanishk.splits.model.planSplits
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -128,6 +129,84 @@ class SplitPlanTest {
         )
         // Silently rescaling to 100% would hide the user's mistake behind a plausible split.
         assertTrue(shares.values.sum() > 100_00, "expected an over-allocation to stay visible")
+    }
+
+    // ------------------------------------------------------- switching between --
+
+    @Test
+    fun `a pinned amount becomes the same slice of the bill as a percentage`() {
+        val converted = convertTypedShares(
+            typed = mapOf("a" to "300"),
+            from = SplitMode.Exact,
+            to = SplitMode.Percent,
+            amountMinor = 900_00,
+        )
+        // Not a literal 300%: a third of the bill is what that row meant.
+        assertEquals(mapOf("a" to "33.33"), converted)
+    }
+
+    @Test
+    fun `a pinned percentage becomes the money it stood for`() {
+        val converted = convertTypedShares(
+            typed = mapOf("a" to "25"),
+            from = SplitMode.Percent,
+            to = SplitMode.Exact,
+            amountMinor = 900_00,
+        )
+        assertEquals(mapOf("a" to "225"), converted)
+    }
+
+    @Test
+    fun `a converted pin still drives the split it came from`() {
+        val converted = convertTypedShares(
+            typed = mapOf("a" to "450"),
+            from = SplitMode.Exact,
+            to = SplitMode.Percent,
+            amountMinor = 900_00,
+        )
+        val shares = plan(SplitMode.Percent, amount = 900_00, typed = converted)
+
+        assertEquals(450_00, shares.getValue("a"))
+        assertEquals(900_00, shares.values.sum())
+    }
+
+    @Test
+    fun `a pinned zero survives the switch rather than going automatic`() {
+        val converted = convertTypedShares(
+            typed = mapOf("a" to "0"),
+            from = SplitMode.Exact,
+            to = SplitMode.Percent,
+            amountMinor = 900_00,
+        )
+        assertEquals(mapOf("a" to "0"), converted)
+
+        val shares = plan(SplitMode.Percent, amount = 900_00, typed = converted)
+        assertEquals(0L, shares.getValue("a"))
+    }
+
+    @Test
+    fun `untouched rows are left alone and equal mode changes nothing`() {
+        val typed = mapOf("a" to "300")
+        assertEquals(
+            typed,
+            convertTypedShares(typed, SplitMode.Exact, SplitMode.Equally, amountMinor = 900_00),
+        )
+        assertEquals(
+            typed,
+            convertTypedShares(typed, SplitMode.Exact, SplitMode.Exact, amountMinor = 900_00),
+        )
+    }
+
+    @Test
+    fun `with no total there is nothing to convert against`() {
+        val converted = convertTypedShares(
+            typed = mapOf("a" to "300"),
+            from = SplitMode.Exact,
+            to = SplitMode.Percent,
+            amountMinor = 0,
+        )
+        // Carrying 300 over at face value would read as 300%.
+        assertTrue(converted.isEmpty(), "expected the pins to be dropped, not reinterpreted")
     }
 
     // ------------------------------------------------------------------- other --

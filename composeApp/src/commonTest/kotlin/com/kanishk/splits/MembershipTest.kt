@@ -105,6 +105,46 @@ class MembershipTest {
     }
 
     @Test
+    fun `only your own name is yours to rename`() {
+        val group = detail(
+            member("aarav", claimedBy = OTHER_DEVICE),
+            member("bhavna", claimedBy = MY_DEVICE),
+            member("chetan"),
+        )
+
+        assertTrue(group.canRename(MY_DEVICE, "bhavna"))
+        assertFalse(group.canRename(MY_DEVICE, "aarav"), "cannot retype somebody else's name")
+        assertFalse(group.canRename(MY_DEVICE, "chetan"), "an unclaimed name is nobody's to edit")
+        assertFalse(group.canRename(null, "bhavna"))
+    }
+
+    @Test
+    fun `being admin does not extend to renaming other people`() {
+        val group = detail(member("aarav", claimedBy = MY_DEVICE), member("bhavna"))
+        assertTrue(group.isAdmin(MY_DEVICE))
+        assertFalse(group.canRename(MY_DEVICE, "bhavna"))
+    }
+
+    @Test
+    fun `only the admin can remove a participant`() {
+        val asAdmin = detail(member("aarav", claimedBy = MY_DEVICE), member("bhavna"))
+        assertTrue(asAdmin.canRemove(MY_DEVICE, "bhavna"))
+
+        // Same group, seen from a device that is not the admin.
+        val asMember = detail(member("aarav"), member("bhavna", claimedBy = MY_DEVICE))
+        assertFalse(asMember.canRemove(MY_DEVICE, "aarav"))
+        assertFalse(asMember.canRemove(MY_DEVICE, "bhavna"), "not even yourself")
+        assertFalse(asMember.canRemove(null, "aarav"))
+    }
+
+    @Test
+    fun `the admin cannot remove themselves`() {
+        // Otherwise the group is left with nobody who can delete it.
+        val group = detail(member("aarav", claimedBy = MY_DEVICE), member("bhavna"))
+        assertFalse(group.canRemove(MY_DEVICE, "aarav"))
+    }
+
+    @Test
     fun `every name taken leaves nothing to claim`() {
         val group = detail(
             member("aarav", claimedBy = OTHER_DEVICE),

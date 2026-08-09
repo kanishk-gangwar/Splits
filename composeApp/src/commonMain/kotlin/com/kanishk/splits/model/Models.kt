@@ -85,6 +85,22 @@ data class GroupDetail(
         return group.adminMemberId == me.id
     }
 
+    /**
+     * Your name is yours to fix, and only yours. A name is how someone is addressed all over
+     * this group, so retyping somebody else's is not a thing anyone gets to do — not even the
+     * admin, whose extra rights are about the group, not about other people's identities.
+     */
+    fun canRename(deviceId: String?, memberId: String): Boolean =
+        meIn(deviceId)?.id == memberId
+
+    /**
+     * Removing a participant is an admin-only action: it takes someone out of a shared group,
+     * so it cannot be down to whoever happens to have the screen open. The admin is excluded
+     * from their own delete button — a group with no admin has nobody left who can delete it.
+     */
+    fun canRemove(deviceId: String?, memberId: String): Boolean =
+        isAdmin(deviceId) && memberId != group.adminMemberId
+
     /** Participants somebody has actually claimed on a device. */
     val joinedMembers: List<Member> get() = members.filter { it.isClaimed }
 

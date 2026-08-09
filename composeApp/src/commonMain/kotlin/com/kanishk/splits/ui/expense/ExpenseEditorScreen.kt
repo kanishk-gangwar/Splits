@@ -68,6 +68,7 @@ import com.kanishk.splits.model.Member
 import com.kanishk.splits.model.FULL_PERCENT
 import com.kanishk.splits.model.Split
 import com.kanishk.splits.model.SplitMode
+import com.kanishk.splits.model.convertTypedShares
 import com.kanishk.splits.model.planSplits
 import com.kanishk.splits.model.customCategoryId
 import com.kanishk.splits.model.formatDate
@@ -120,6 +121,9 @@ fun ExpenseEditorScreen(
     var splitMode by remember { mutableStateOf(SplitMode.Equally) }
     val selected = remember { mutableStateMapOf<String, Boolean>() }
     val shareText = remember { mutableStateMapOf<String, String>() }
+    // Which units the strings in shareText are currently in. Equally shows no fields, so it
+    // never changes this — bouncing through it must not lose what was typed in Exact.
+    var shareUnit by remember { mutableStateOf(SplitMode.Exact) }
 
     var showPaidByPicker by remember { mutableStateOf(false) }
     var showPaidToPicker by remember { mutableStateOf(false) }
@@ -375,7 +379,22 @@ fun ExpenseEditorScreen(
                         selected = selected,
                         shareText = shareText,
                         splitMode = splitMode,
-                        onModeChange = { splitMode = it },
+                        onModeChange = { mode ->
+                            // Anything already pinned moves across in the new mode's units, so
+                            // ₹300 of ₹900 arrives as 33.33% rather than as a literal 300%.
+                            if (mode != SplitMode.Equally && mode != shareUnit) {
+                                val converted = convertTypedShares(
+                                    typed = shareText.toMap(),
+                                    from = shareUnit,
+                                    to = mode,
+                                    amountMinor = amountMinor,
+                                )
+                                shareText.clear()
+                                shareText.putAll(converted)
+                                shareUnit = mode
+                            }
+                            splitMode = mode
+                        },
                         amountMinor = amountMinor,
                         computedSplits = computedSplits,
                         balanced = splitBalanced,
@@ -767,9 +786,10 @@ private fun SplitSection(
             options = listOf("Equally", "Exact", "Percent"),
             selectedIndex = splitMode.ordinal,
             onSelect = { index ->
-                // Fields stay empty on purpose. An empty row is an *automatic* row that shows
-                // its computed share as a placeholder; pre-filling every row would make them
-                // all look hand-entered and defeat the redistribution.
+                // Untouched fields stay empty on purpose. An empty row is an *automatic* row
+                // that shows its computed share as a placeholder; pre-filling every row would
+                // make them all look hand-entered and defeat the redistribution. Rows that were
+                // pinned do carry over, restated in the new mode's units — see the caller.
                 onModeChange(SplitMode.entries[index])
             },
             modifier = Modifier.fillMaxWidth(),
