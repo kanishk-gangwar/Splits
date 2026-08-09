@@ -15,6 +15,7 @@ put together, and more importantly *why* the awkward bits are the way they are.
 - [Filtering by participant](#filtering-by-participant)
 - [Notifications](#notifications)
 - [Category suggestions](#category-suggestions)
+- [Invites and distribution](#invites-and-distribution)
 - [Who has joined](#who-has-joined)
 - [UI conventions](#ui-conventions)
 - [Build setup and its sharp edges](#build-setup-and-its-sharp-edges)
@@ -225,6 +226,12 @@ works fine on a plane.
 Order matters: pulling first would let the server overwrite an edit it had never been told
 about. Pushing first means last-write-wins resolves against complete information.
 
+**Writes upload themselves.** `SyncEngine` watches `observeDirtyCount()` and syncs
+`AUTO_SYNC_DEBOUNCE_MILLIS` (700ms) after anything is written, debounced via `collectLatest` so
+a burst of edits becomes one round trip. Before this a saved expense sat on the device until
+the user happened to pull down to refresh — which is not something anyone should have to know
+to do. See [Notifications](#notifications) for the full list of what triggers a sync.
+
 **Per-row dirty flags.** Every table has a `dirty` column, set on write and cleared after a
 successful push. Only touched rows go up.
 
@@ -254,8 +261,13 @@ hard-delete immediately and keep nothing.
   the client requested. That is why `requestedGroupIds` is threaded through `applyRemote`.
 
 Locally, a delete still writes a tombstone first — it is the only record that the deletion
-happened, and it must survive until the push succeeds. `markPushed` clears it immediately
-afterwards. `splits_purge_deleted` remains as a sweep for rows left by earlier versions.
+happened, and it must survive until the push succeeds. `markPushed` clears it the moment the
+push lands, via `purgeSyncedTombstones` and friends, which only touch rows where `dirty = 0`.
+
+Two safety nets remain from the older tombstone design and are now near no-ops:
+`reclaimStorageIfDue` runs at most daily and calls `splits_purge_deleted` plus a local sweep
+older than `TOMBSTONE_RETENTION_DAYS`. In normal operation both find nothing; they exist to
+clear rows written by earlier versions and anything orphaned by a push that failed halfway.
 
 The cost is sending every live id on each pull. At a few hundred expenses that is a few
 kilobytes, a good trade for never accumulating deleted data. At tens of thousands it would want
@@ -349,6 +361,22 @@ The suggestion only ever fills a gap. The editor tracks `categoryPickedByHand`; 
 taps any chip their choice stands, and opening an existing expense counts as already decided.
 While a suggestion is showing, the picker labels it "suggested from the title" so it is never
 mistaken for something the user chose.
+
+## Invites and distribution
+
+`DeepLinks.kt` owns both directions of the invite. `parseInvite` accepts every shape a code can
+arrive in — `splits://join/CODE`, a web link with the code in the fragment or query, or the bare
+code pasted by hand — because a link that has been through a chat app, an email client and a
+copy-paste is not guaranteed to arrive intact.
+
+`inviteShareMessage` deliberately bundles `APP_DOWNLOAD_URL` with the invite. Most people
+receiving one will not have the app, and expecting the sender to remember to paste a second link
+is a good way to have nobody join.
+
+That URL is `releases/latest/download/Splits.apk`, which resolves to the newest release only
+because **every release attaches its APK under exactly that filename**. Rename the asset and the
+link breaks silently — the release title carries the version instead. Deployment details are in
+[SETUP.md](SETUP.md).
 
 ## Who has joined
 
@@ -543,4 +571,7 @@ composable a shell over it — that is exactly how `SplitPlan` came to exist.
 - **Deleting a member is blocked once they appear in any expense.** There is no reassign flow.
 - **iOS is unexercised.** The target compiles as part of the Kotlin build, but the Xcode project
   was authored without Xcode available and has had no runtime testing.
-- **Identity cannot move devices.** See [Identity](#identity-there-are-no-accounts).
+- **Identity has no recovery path.** Moving to a new phone works — give the name up on the old
+  device, claim it on the new one — but a lost or wiped phone strands that name as claimed, and
+  only someone still in the group can free it by removing and re-adding the participant. See
+  [Identity](#identity-there-are-no-accounts).
