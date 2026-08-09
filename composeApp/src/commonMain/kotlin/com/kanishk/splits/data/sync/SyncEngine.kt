@@ -109,14 +109,14 @@ class SyncEngine(
         val outcome = runCatching {
             val pending = repository.collectDirty()
             if (!pending.isEmpty) {
-                api.push(pending).getOrThrow()
+                api.push(pending, repository.deviceId).getOrThrow()
                 repository.markPushed(pending)
             }
 
             val groupIds = repository.knownGroupIds()
             if (groupIds.isNotEmpty()) {
                 val since = repository.lastPulledAt()
-                val snapshot = api.pull(groupIds, since).getOrThrow()
+                val snapshot = api.pull(groupIds, since, repository.deviceId).getOrThrow()
                 if (!snapshot.isEmpty) {
                     val notices = repository.applyRemote(
                         snapshot = snapshot,
@@ -156,18 +156,24 @@ class SyncEngine(
     }
 
     /**
-     * Hard-deletes aged tombstones on both sides, at most once a day.
+     * Hard-deletes aged local tombstones, at most once a day.
      *
      * Runs after the pull rather than before it, so this device has already seen whatever the
      * server was holding. Failures are swallowed: reclaiming disk is housekeeping, and it is
      * not worth reporting a sync as failed over.
+     *
+     * The server half of this used to be a `splits_purge_deleted` call from here. It is gone:
+     * that function takes no secret and sweeps every group in the project, so leaving it
+     * callable by the publishable key — which ships inside the APK and is therefore public —
+     * handed anyone on the internet a global delete. It is now unGRANTed and runs from the SQL
+     * editor or pg_cron instead. Nothing is lost: with deletions carried by pull's live-id
+     * lists it had nothing to find in normal operation anyway.
      */
     private suspend fun reclaimStorageIfDue() {
         val now = nowMillis()
         if (now - repository.lastPurgeAt() < PURGE_INTERVAL_MILLIS) return
 
         runCatching {
-            api.purgeDeleted(TOMBSTONE_RETENTION_DAYS)
             repository.purgeLocalTombstones(now - TOMBSTONE_RETENTION_DAYS * DAY_MILLIS)
             repository.setLastPurgeAt(now)
         }
@@ -186,7 +192,7 @@ class SyncEngine(
     suspend fun fetchInvite(inviteCode: String): JoinResult {
         if (!api.isConfigured) return JoinResult.NotFound
 
-        return api.resolveInvite(inviteCode).fold(
+        return api.resolveInvite(inviteCode, repository.deviceId).fold(
             onSuccess = { snapshot ->
                 val group = snapshot.groups.firstOrNull { !it.deleted }
                 if (!snapshot.found || group == null) {

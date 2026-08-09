@@ -78,9 +78,11 @@ participant row: `memberEntity.claimedByDeviceId = <this device>`.
 
 Consequences, all intentional:
 
-- **An invite link is a capability.** Anyone holding the 8-character code can see the group and
-  claim an unclaimed name. There is nothing else guarding it, and the server enforces exactly
-  that and no more.
+- **An invite link is a capability.** Anyone holding the code can see the group and claim an
+  unclaimed name. There is nothing else guarding it, and the server enforces exactly that and
+  no more — in particular an invite does *not* confer the right to take over somebody else's
+  name or delete the group. See [Server security model](#server-security-model), which is where
+  that line is actually drawn.
 - **A claimed name leaves the pool entirely.** The join screen and the identity picker list
   only names nobody holds — taken names are not shown greyed out. A row you cannot pick tells
   you nothing except that it is not for you, and a list full of them invites the wrong tap. The
@@ -264,10 +266,13 @@ Locally, a delete still writes a tombstone first — it is the only record that 
 happened, and it must survive until the push succeeds. `markPushed` clears it the moment the
 push lands, via `purgeSyncedTombstones` and friends, which only touch rows where `dirty = 0`.
 
-Two safety nets remain from the older tombstone design and are now near no-ops:
-`reclaimStorageIfDue` runs at most daily and calls `splits_purge_deleted` plus a local sweep
-older than `TOMBSTONE_RETENTION_DAYS`. In normal operation both find nothing; they exist to
-clear rows written by earlier versions and anything orphaned by a push that failed halfway.
+One safety net remains from the older tombstone design and is now a near no-op:
+`reclaimStorageIfDue` runs at most daily and sweeps local rows older than
+`TOMBSTONE_RETENTION_DAYS`. In normal operation it finds nothing; it exists to clear rows
+written by earlier versions and anything orphaned by a push that failed halfway. It used to
+call `splits_purge_deleted` on the server too — that call is gone, because the function is
+global and unauthenticated and so must not be reachable with the public publishable key. Run it
+by hand or on a schedule instead.
 
 The cost is sending every live id on each pull. At a few hundred expenses that is a few
 kilobytes, a good trade for never accumulating deleted data. At tens of thousands it would want
@@ -291,6 +296,11 @@ writes incorrectly against another's. For friends splitting dinner this is the r
 it avoids a server round trip for a timestamp on every write. If it ever matters, stamp
 `updated_at` inside `splits_push` from `now()` instead.
 
+`splits_push` does **clamp** it to at most five minutes in the future. Device-stamped
+last-write-wins survives; what does not is pushing `updated_at = 9223372036854775807` to pin a
+row so that no honest edit can ever overwrite it again. A skewed clock should lose a merge, not
+win every future one.
+
 ---
 
 ## Server security model
@@ -306,19 +316,82 @@ permissive RLS policies and hope, the schema does the opposite:
 
 | Function | Requires |
 |---|---|
-| `splits_pull(group_ids, since)` | the 128-bit group ids |
-| `splits_resolve_invite(code)` | the 8-character invite code |
-| `splits_push(payload)` | the group id it writes into |
+| `splits_pull(group_ids, since, device_id)` | the 128-bit group ids |
+| `splits_resolve_invite(code, device_id)` | the invite code |
+| `splits_push(payload, device_id)` | the group id it writes into |
 | `splits_delete_group(group_id, device_id)` | the group id **and** ownership of the admin member's device |
 
-This means **the publishable key is safe inside the shipped APK** — and it is in there, so
-treat it as public. The security rests on those grants. Never add a permissive policy to those
-tables, and never put the `sb_secret_…` / `service_role` key in the app.
+`splits_purge_deleted` is a fifth function but is **not granted to `anon`**: it takes no secret
+and sweeps every group in the project. Run it from the SQL editor or pg_cron.
 
-`splits_delete_group` is the one place the server refuses to trust the client. The UI hides the
-delete action from non-admins, but the function independently checks that the calling device id
-matches the device that claimed `admin_member_id`. Requirement 4 therefore holds even against a
-tampered client.
+This means **the publishable key is safe inside the shipped APK** — and it is in there, so
+treat it as public. Assume an attacker has it, has your project URL, and is talking to
+PostgREST with `curl` rather than through the app. Hiding a button changes nothing for them;
+only these four functions do. Never add a permissive policy to those tables, and never put the
+`sb_secret_…` / `service_role` key in the app.
+
+### The rule that makes the model hold
+
+> **A secret used for authorisation must never be returned by any function.**
+
+This is not abstract — the first version of the schema broke it and the consequence was total.
+`splits_pull` projected members with `to_jsonb(m)`, which serialises every column, including
+`claimed_by_device_id`. That column is what `splits_delete_group` checks to decide who is
+admin. So anyone forwarded an invite link could resolve it, read the admin's device id straight
+out of the response, pass it back to `splits_delete_group`, and permanently destroy the group
+and every expense in it. The doc claimed the check held "even against a tampered client"; it
+held against nothing.
+
+Two things follow, and both are enforced in `splits_push` rather than trusted to the UI:
+
+- **`splits_pull` projects members column by column**, never `to_jsonb`. A device sees its own
+  id on names it holds and the opaque string `someone-else` on everyone else's. Both things the
+  app asks of the field still work — `Member.isClaimed` is a null check and `GroupDetail.me` is
+  an equality check against this device's own id. **Do not "tidy" that projection back into
+  `to_jsonb(m)`.**
+- **A claim can only be taken for yourself, and only when nobody else holds it**; a claim can
+  only be released by the device holding it. Otherwise the device id being secret would not
+  matter: anyone with the invite could simply push a claim over the admin's name and then
+  delete. `admin_member_id` is likewise frozen after the group row is inserted — the app sets
+  it once at creation and has no transfer flow, so there is nothing legitimate to allow.
+
+Flagging a group `deleted = true` through `splits_push` is gated on admin rights for the same
+reason: every other device honours that flag on its next pull, so it is as destructive as the
+delete itself. Ordinary edits are *not* gated — anyone in the group can add and change
+expenses, and that is the product, not an oversight.
+
+`splits_delete_group` is where all of this lands: the UI hides the delete action from
+non-admins, and the function independently checks that the calling device id matches the device
+that claimed `admin_member_id`. That check is only worth anything because the device id is no
+longer disclosed. **Re-exposing that column anywhere re-opens the door.**
+
+`verify.sh` has an "Attack" section that replays both routes against a throwaway group. Those
+checks must keep failing to achieve anything; if one starts succeeding, the model is gone.
+
+### Where the entropy comes from
+
+The ids *are* the credentials, so they are minted with the platform CSPRNG
+(`secureRandomBytes` in `data/Platform.kt` — `SecureRandom` on Android, `SecRandomCopyBytes` on
+iOS), not `kotlin.random.Random`. A general-purpose PRNG holds less internal state than the
+128 bits it prints, and its future output follows from output already observed. That is fine
+for shuffling and disqualifying for a bearer token.
+
+Invite codes are **12 characters** (~2^59) from a 31-symbol alphabet. Eight was ~2^40, which is
+uncomfortably reachable by an attacker who does not care *which* group they find — a scan only
+has to hit any live code. Older 8-character codes keep working, and the throttle in
+`splits_resolve_invite` exists to cover them; it is best-effort (the client address comes from
+a gateway header) and fails open, so treat code length as the real defence.
+
+### What is deliberately not defended
+
+- **Anyone with the invite can edit the group's data.** Expenses, names, amounts. These are
+  people splitting a dinner; the invite is the trust boundary and it is the one the UI presents.
+- **Volume.** Payload sizes and column lengths are capped and pulls are bounded, but a
+  determined attacker with a valid group id can still churn writes. There is no per-caller
+  quota, because there is no caller identity to hang one on.
+- **If the admin releases their name**, the admin member becomes unclaimed and the next device
+  to claim it inherits admin. That follows from admin being a *claim* rather than an account,
+  and it still needs the invite code.
 
 ---
 
@@ -541,6 +614,7 @@ All tests in `commonTest` are pure logic:
 | `NotificationTextTest` | finished notification strings, including that none contain a raw placeholder |
 | `MembershipTest` | name availability, joined counts, releasing a name, admin following the claim |
 | `BalancesTest` | reimbursement excluded from total, balances netting to zero, settle-up clearing every debt |
+| `IdsTest` | id format the server enforces, invite code length and alphabet, no modulo bias, normalising round-trips |
 
 ```bash
 ./gradlew :composeApp:testDebugUnitTest
@@ -548,7 +622,12 @@ All tests in `commonTest` are pure logic:
 
 `backend/verify.sh` covers the server: that the functions exist, that direct table access is
 refused, and a full push → invite-resolve → admin-check → delete round trip that cleans up
-after itself.
+after itself. Its **Attack** section is the part worth keeping: it replays, against a throwaway
+group, both routes by which somebody holding only an invite link used to be able to seize the
+admin identity and destroy the group. Those checks assert that the attack *fails*. Note that a
+non-admin device id being refused is not by itself evidence the model holds — the old schema
+passed that check while the bypass was wide open, because the attacker never needed to guess a
+device id; it was handed to them. Test the disclosure, not just the comparison.
 
 **What is not covered:** there are no UI tests and no instrumented tests. Screens, navigation,
 and the client half of sync are verified only by compiling and by running the app manually. If
@@ -560,6 +639,11 @@ composable a shell over it — that is exactly how `SplitPlan` came to exist.
 ## Known gaps
 
 - **No UI or instrumentation tests.** The riskiest untested surface is the sync client.
+- **Installs older than the security fix lose their identity until they update.** The schema no
+  longer hands a device anybody's `claimed_by_device_id` but its own, and an older build does
+  not send `p_device_id` to identify itself — so it sees every name as held by someone else and
+  can neither claim nor release one. Its expenses still sync. There is no way around this: the
+  old build's identity worked *because* the server published the secret. Ship the new APK.
 - **`observeGroupCards()` loads everything.** Fine now; revisit at a few thousand expenses.
 - **No conflict UI.** Sync resolves silently by last-write-wins. Two people editing the same
   expense offline means one loses without being told.

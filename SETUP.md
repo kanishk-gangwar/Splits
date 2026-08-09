@@ -17,6 +17,13 @@ and GitHub Pages (so shared invite links open something in a browser).
    > The script is idempotent — `create table if not exists`, `create or replace function`.
    > **Re-run the whole file after pulling changes** to pick up new functions. `verify.sh` tells
    > you if something is missing.
+
+   > **If your project is already running an older copy of this schema, re-run it now.** The
+   > current version closes two holes that let anyone forwarded an invite link take over the
+   > admin identity and permanently delete the group — see *Server security model* in
+   > [TECHNICAL.md](TECHNICAL.md). It changes function signatures, so it `drop`s the old ones
+   > first and app builds older than this one will not be able to claim or release a name until
+   > they update. `./backend/verify.sh` proves the fix landed.
 3. Go to **Project Settings → API** and copy:
    - **Project URL** — looks like `https://abcdefgh.supabase.co`
    - **anon public** key — a long JWT

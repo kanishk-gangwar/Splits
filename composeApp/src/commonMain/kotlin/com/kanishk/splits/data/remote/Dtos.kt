@@ -27,6 +27,15 @@ data class RemoteMember(
     @SerialName("group_id") val groupId: String,
     val name: String,
     @SerialName("color_index") val colorIndex: Int = 0,
+    /**
+     * This device's own id on names it holds, the opaque string `someone-else` on names held
+     * by anybody else, and null when the name is free. The server never discloses a real
+     * device id to a device other than its owner — it is what proves admin rights, so handing
+     * it out would make the admin check in `splits_delete_group` decorative.
+     *
+     * Both things the app asks of this field still work on the sentinel: `Member.isClaimed` is
+     * a null check, and `GroupDetail.me` compares against this device's own id.
+     */
     @SerialName("claimed_by_device_id") val claimedByDeviceId: String? = null,
     @SerialName("created_at") val createdAt: Long,
     @SerialName("updated_at") val updatedAt: Long,
@@ -93,20 +102,28 @@ data class PushPayload(
 
 // The RPC argument envelopes — PostgREST takes named parameters as a JSON object body.
 
+// Every call that reads or writes a claim carries the caller's device id. The server uses it
+// to decide whose claims are readable and whose are writable — see the security model in
+// TECHNICAL.md. It is a secret, not an identifier to hand around: the server never echoes
+// another device's back, and neither should anything here.
+
 @Serializable
 internal data class PullArgs(
     @SerialName("p_group_ids") val groupIds: List<String>,
     @SerialName("p_since") val since: Long,
+    @SerialName("p_device_id") val deviceId: String,
 )
 
 @Serializable
 internal data class InviteArgs(
     @SerialName("p_invite_code") val inviteCode: String,
+    @SerialName("p_device_id") val deviceId: String,
 )
 
 @Serializable
 internal data class PushArgs(
     @SerialName("p_payload") val payload: PushPayload,
+    @SerialName("p_device_id") val deviceId: String,
 )
 
 @Serializable
@@ -119,9 +136,4 @@ internal data class DeleteGroupArgs(
 data class RpcResult(
     val ok: Boolean = false,
     val reason: String? = null,
-)
-
-@Serializable
-internal data class PurgeArgs(
-    @SerialName("p_retention_days") val retentionDays: Int,
 )

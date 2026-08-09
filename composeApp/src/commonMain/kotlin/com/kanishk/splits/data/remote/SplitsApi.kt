@@ -25,21 +25,17 @@ class SplitsApi(
 
     val isConfigured: Boolean get() = config.isConfigured
 
-    suspend fun pull(groupIds: List<String>, since: Long): Result<RemoteSnapshot> =
-        rpc("splits_pull", PullArgs(groupIds, since))
+    suspend fun pull(groupIds: List<String>, since: Long, deviceId: String): Result<RemoteSnapshot> =
+        rpc("splits_pull", PullArgs(groupIds, since, deviceId))
 
-    suspend fun resolveInvite(inviteCode: String): Result<RemoteSnapshot> =
-        rpc("splits_resolve_invite", InviteArgs(inviteCode))
+    suspend fun resolveInvite(inviteCode: String, deviceId: String): Result<RemoteSnapshot> =
+        rpc("splits_resolve_invite", InviteArgs(inviteCode, deviceId))
 
-    suspend fun push(payload: PushPayload): Result<RpcResult> =
-        rpc("splits_push", PushArgs(payload))
+    suspend fun push(payload: PushPayload, deviceId: String): Result<RpcResult> =
+        rpc("splits_push", PushArgs(payload, deviceId))
 
     suspend fun deleteGroup(groupId: String, deviceId: String): Result<RpcResult> =
         rpc("splits_delete_group", DeleteGroupArgs(groupId, deviceId))
-
-    /** Hard-deletes tombstones that have aged past the retention window. */
-    suspend fun purgeDeleted(retentionDays: Int): Result<RpcResult> =
-        rpc("splits_purge_deleted", PurgeArgs(retentionDays))
 
     private suspend inline fun <reified Args, reified Out> rpc(
         function: String,

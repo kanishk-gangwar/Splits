@@ -9,6 +9,7 @@ import android.os.Build
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.kanishk.splits.db.SplitsDatabase
+import java.security.SecureRandom
 
 /**
  * Set once from [com.kanishk.splits.SplitsApplication] before any Compose code runs, so the
@@ -41,3 +42,13 @@ actual fun copyToClipboard(text: String) {
 }
 
 actual fun deviceLabel(): String = "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}"
+
+/**
+ * One instance, reused. `SecureRandom()` seeds itself from the OS on construction, so minting
+ * a fresh one per id is pure cost — and on Android the no-arg constructor is already the
+ * correctly seeded platform CSPRNG.
+ */
+private val secureRandom = SecureRandom()
+
+actual fun secureRandomBytes(count: Int): ByteArray =
+    ByteArray(count).also { secureRandom.nextBytes(it) }
