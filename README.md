@@ -28,6 +28,11 @@ Only the member who created the group can delete it for everyone. Anyone else ca
 which removes it from their own device only — reversible from Settings. Both are separate
 from *archive*, which parks a group with its history intact.
 
+**Offline first, synced when you pull down.**
+Every write hits the local database immediately — the network is never in the path of a user
+action. Swipe down to reconcile with the server. Free Supabase backend; see
+[SETUP.md](SETUP.md). Skip that setup entirely and the app is simply a very good offline app.
+
 **Money that adds up.**
 Amounts are integer minor units end to end; nothing is ever a `Double`. Split evenly, by
 exact amounts, or by percentage — the leftover paise always land on someone rather than
@@ -42,6 +47,8 @@ composeApp/
   src/commonMain/       all shared logic and the entire UI
     kotlin/…/model/     money, categories, balances, settle-up maths
     kotlin/…/data/      SQLDelight repository, device identity, platform expects
+    kotlin/…/data/remote/  Supabase RPC client and wire types
+    kotlin/…/data/sync/    push-then-pull reconciliation
     kotlin/…/ui/        theme, components, screens
     sqldelight/         schema and queries
   src/androidMain/      Activity, Application, Android actuals
@@ -49,6 +56,8 @@ composeApp/
   src/commonTest/       money and balance tests
 
 iosApp/                 Xcode project that hosts the shared Compose UI
+backend/supabase/       schema.sql — tables, RLS, and the four RPC functions
+docs/                   the invite landing page, served by GitHub Pages
 ```
 
 ## Stack
@@ -59,6 +68,7 @@ iosApp/                 Xcode project that hosts the shared Compose UI
 | Language | Kotlin 2.3.21 |
 | Storage | SQLDelight 2.3 (offline-first, sync flags built into the schema) |
 | Navigation | Jetpack Navigation (multiplatform), type-safe routes |
+| Sync | Supabase (Postgres + RPC), Ktor client |
 | Build | AGP 9.1, Gradle 9.3 |
 
 ## Running it
@@ -72,6 +82,8 @@ iosApp/                 Xcode project that hosts the shared Compose UI
 **iOS** — open `iosApp/iosApp.xcodeproj` in Xcode and run. The Kotlin framework is compiled
 by a build phase, so no extra setup is needed. To run on a physical device, set `TEAM_ID` in
 `iosApp/Configuration/Config.xcconfig`.
+
+**Sync** — optional, free, and additive: see [SETUP.md](SETUP.md).
 
 **Tests**
 

@@ -66,6 +66,11 @@ UPDATE groupEntity SET deleted = 1, updatedAt = ?, dirty = 1 WHERE id = ?;
 hardDeleteGroup:
 DELETE FROM groupEntity WHERE id = ?;
 
+-- Every group this device knows about, including archived and hidden ones, because the
+-- sync pull must keep them fresh even while they are off the user's list.
+selectAllGroupIds:
+SELECT id FROM groupEntity WHERE deleted = 0;
+
 selectDirtyGroups:
 SELECT * FROM groupEntity WHERE dirty = 1;
 

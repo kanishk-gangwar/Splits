@@ -63,6 +63,7 @@ import com.kanishk.splits.ui.components.SectionLabel
 import com.kanishk.splits.ui.components.SegmentedControl
 import com.kanishk.splits.ui.components.SplitsCard
 import com.kanishk.splits.ui.components.SplitsTopBar
+import com.kanishk.splits.ui.components.SyncRefreshBox
 import com.kanishk.splits.ui.components.VSpace
 import com.kanishk.splits.ui.components.balanceColor
 import com.kanishk.splits.ui.theme.categoryTint
@@ -139,8 +140,9 @@ fun GroupScreen(
             }
         },
     ) { padding ->
+        SyncRefreshBox(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()),
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 110.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -182,6 +184,7 @@ fun GroupScreen(
                     onSettleUp = onSettleUp,
                 )
             }
+        }
         }
     }
 

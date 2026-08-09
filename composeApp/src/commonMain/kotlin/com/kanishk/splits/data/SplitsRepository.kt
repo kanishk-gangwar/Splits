@@ -7,6 +7,12 @@ import com.kanishk.splits.db.ExpenseEntity
 import com.kanishk.splits.db.GroupEntity
 import com.kanishk.splits.db.MemberEntity
 import com.kanishk.splits.db.SplitEntity
+import com.kanishk.splits.data.remote.PushPayload
+import com.kanishk.splits.data.remote.RemoteExpense
+import com.kanishk.splits.data.remote.RemoteGroup
+import com.kanishk.splits.data.remote.RemoteMember
+import com.kanishk.splits.data.remote.RemoteShare
+import com.kanishk.splits.data.remote.RemoteSnapshot
 import com.kanishk.splits.db.SplitsDatabase
 import com.kanishk.splits.model.Expense
 import com.kanishk.splits.model.ExpenseKind
@@ -28,6 +34,7 @@ import kotlinx.coroutines.withContext
 private const val PREF_DEVICE_ID = "device_id"
 private const val PREF_DISPLAY_NAME = "display_name"
 private const val PREF_THEME = "theme_mode"
+private const val PREF_LAST_PULL = "last_pulled_at"
 
 class SplitsRepository(
     private val database: SplitsDatabase,
@@ -291,6 +298,165 @@ class SplitsRepository(
             queries.deleteMembersOfGroup(groupId)
         }
     }
+
+    // -------------------------------------------------------------------- sync --
+
+    suspend fun lastPulledAt(): Long = withContext(dispatcher) {
+        queries.selectPref(PREF_LAST_PULL).executeAsOneOrNull()?.toLongOrNull() ?: 0L
+    }
+
+    suspend fun setLastPulledAt(value: Long) = withContext(dispatcher) {
+        queries.upsertPref(PREF_LAST_PULL, value.toString())
+    }
+
+    suspend fun knownGroupIds(): List<String> = withContext(dispatcher) {
+        queries.selectAllGroupIds().executeAsList()
+    }
+
+    /** Everything edited on this device since the last successful push. */
+    suspend fun collectDirty(): PushPayload = withContext(dispatcher) {
+        val groups = queries.selectDirtyGroups().executeAsList()
+        val members = queries.selectDirtyMembers().executeAsList()
+        val expenses = queries.selectDirtyExpenses().executeAsList()
+
+        PushPayload(
+            groups = groups.map { row ->
+                RemoteGroup(
+                    id = row.id,
+                    name = row.name,
+                    emoji = row.emoji,
+                    currencyCode = row.currencyCode,
+                    inviteCode = row.inviteCode,
+                    adminMemberId = row.adminMemberId,
+                    createdAt = row.createdAt,
+                    updatedAt = row.updatedAt,
+                    deleted = row.deleted,
+                )
+            },
+            members = members.map { row ->
+                RemoteMember(
+                    id = row.id,
+                    groupId = row.groupId,
+                    name = row.name,
+                    colorIndex = row.colorIndex.toInt(),
+                    claimedByDeviceId = row.claimedByDeviceId,
+                    createdAt = row.createdAt,
+                    updatedAt = row.updatedAt,
+                    deleted = row.deleted,
+                )
+            },
+            expenses = expenses.map { row ->
+                RemoteExpense(
+                    id = row.id,
+                    groupId = row.groupId,
+                    title = row.title,
+                    amountMinor = row.amountMinor,
+                    paidByMemberId = row.paidByMemberId,
+                    kind = row.kind,
+                    categoryId = row.categoryId,
+                    note = row.note,
+                    occurredAt = row.occurredAt,
+                    createdAt = row.createdAt,
+                    updatedAt = row.updatedAt,
+                    deleted = row.deleted,
+                )
+            },
+            // Shares ride along with their expense; the server replaces the whole set.
+            shares = expenses.flatMap { expense ->
+                queries.selectSplitsOfExpense(expense.id).executeAsList().map { split ->
+                    RemoteShare(expense.id, split.memberId, split.shareMinor)
+                }
+            },
+        )
+    }
+
+    suspend fun markPushed(payload: PushPayload) = withContext(dispatcher) {
+        database.transaction {
+            payload.groups.forEach { queries.clearGroupDirty(it.id) }
+            payload.members.forEach { queries.clearMemberDirty(it.id) }
+            payload.expenses.forEach { queries.clearExpenseDirty(it.id) }
+        }
+    }
+
+    /**
+     * Folds a server snapshot into the local database, newest-write-wins per row.
+     *
+     * Two local-only facts are deliberately preserved: `archived` and `hidden`. They are this
+     * device's shelving decisions and must survive a pull, or every refresh would drag hidden
+     * groups back onto the user's list.
+     */
+    suspend fun applyRemote(snapshot: RemoteSnapshot) = withContext(dispatcher) {
+        database.transaction {
+            snapshot.groups.forEach { remote ->
+                val local = queries.selectGroupById(remote.id).executeAsOneOrNull()
+                if (local != null && local.updatedAt > remote.updatedAt) return@forEach
+                queries.upsertGroup(
+                    id = remote.id,
+                    name = remote.name,
+                    emoji = remote.emoji,
+                    currencyCode = remote.currencyCode,
+                    inviteCode = remote.inviteCode,
+                    adminMemberId = remote.adminMemberId,
+                    createdAt = remote.createdAt,
+                    updatedAt = remote.updatedAt,
+                    archived = local?.archived ?: false,
+                    hidden = local?.hidden ?: false,
+                    deleted = remote.deleted,
+                    dirty = false,
+                )
+            }
+
+            snapshot.members.forEach { remote ->
+                val local = queries.selectMemberById(remote.id).executeAsOneOrNull()
+                if (local != null && local.updatedAt > remote.updatedAt) return@forEach
+                queries.upsertMember(
+                    id = remote.id,
+                    groupId = remote.groupId,
+                    name = remote.name,
+                    colorIndex = remote.colorIndex.toLong(),
+                    claimedByDeviceId = remote.claimedByDeviceId,
+                    createdAt = remote.createdAt,
+                    updatedAt = remote.updatedAt,
+                    deleted = remote.deleted,
+                    dirty = false,
+                )
+            }
+
+            val sharesByExpense = snapshot.shares.groupBy { it.expenseId }
+
+            snapshot.expenses.forEach { remote ->
+                val local = queries.selectExpenseById(remote.id).executeAsOneOrNull()
+                if (local != null && local.updatedAt > remote.updatedAt) return@forEach
+                queries.upsertExpense(
+                    id = remote.id,
+                    groupId = remote.groupId,
+                    title = remote.title,
+                    amountMinor = remote.amountMinor,
+                    paidByMemberId = remote.paidByMemberId,
+                    kind = remote.kind,
+                    categoryId = remote.categoryId,
+                    note = remote.note,
+                    occurredAt = remote.occurredAt,
+                    createdAt = remote.createdAt,
+                    updatedAt = remote.updatedAt,
+                    deleted = remote.deleted,
+                    dirty = false,
+                )
+                // Replace the share set wholesale — an edit may have dropped a participant.
+                queries.deleteSplitsOfExpense(remote.id)
+                sharesByExpense[remote.id].orEmpty().forEach { share ->
+                    queries.insertSplit(remote.id, share.memberId, share.shareMinor)
+                }
+            }
+        }
+    }
+
+    /** The highest server timestamp in a snapshot — the watermark for the next pull. */
+    fun watermarkOf(snapshot: RemoteSnapshot): Long = maxOf(
+        snapshot.groups.maxOfOrNull { it.updatedAt } ?: 0L,
+        snapshot.members.maxOfOrNull { it.updatedAt } ?: 0L,
+        snapshot.expenses.maxOfOrNull { it.updatedAt } ?: 0L,
+    )
 
     // ----------------------------------------------------------------- helpers --
 

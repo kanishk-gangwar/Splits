@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kanishk.splits.LocalRepository
+import com.kanishk.splits.LocalSyncEngine
 import com.kanishk.splits.model.Group
 import com.kanishk.splits.ui.components.Avatar
 import com.kanishk.splits.ui.components.EmptyState
@@ -55,13 +56,19 @@ fun JoinScreen(
     onBack: () -> Unit,
 ) {
     val repository = LocalRepository.current
+    val syncEngine = LocalSyncEngine.current
     val scope = rememberCoroutineScope()
 
     var group by remember { mutableStateOf<Group?>(null) }
     var resolved by remember { mutableStateOf(false) }
 
     LaunchedEffect(inviteCode) {
+        // A code shared by someone else won't be on this device yet, so ask the server.
         group = repository.findGroupByInvite(inviteCode)
+            ?: run {
+                syncEngine.fetchInvite(inviteCode)
+                repository.findGroupByInvite(inviteCode)
+            }
         resolved = true
     }
 
@@ -85,8 +92,8 @@ fun JoinScreen(
                 EmptyState(
                     glyph = "🔍",
                     title = "That invite didn't match anything",
-                    subtitle = "Code $inviteCode isn't on this device yet. Once the group syncs from " +
-                        "the server it will show up here — or ask the admin to re-share the link.",
+                    subtitle = "Code $inviteCode doesn't match any group we could reach. Check the " +
+                        "code, or ask the admin to re-share the invite link.",
                     modifier = Modifier.align(Alignment.Center),
                 )
             }

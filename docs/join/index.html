@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Join a group on Splits</title>
+<meta name="description" content="You've been invited to split expenses on Splits.">
+<meta property="og:title" content="Join a group on Splits">
+<meta property="og:description" content="Open the invite to pick your name — no sign-up, no phone number.">
+<style>
+  :root {
+    --bg: #0b0d14;
+    --surface: #151824;
+    --surface-2: #1c2030;
+    --outline: #232839;
+    --text: #e9eaf2;
+    --muted: #9aa0b8;
+    --violet: #7c5cff;
+    --violet-2: #9e5cff;
+    --mint: #31d0aa;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f6fb; --surface: #ffffff; --surface-2: #f1f1f8; --outline: #e6e7ef;
+      --text: #14161f; --muted: #5f6478; --violet: #6448e8; --violet-2: #9a5cf0; --mint: #0f9d77;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    width: 100%;
+    max-width: 420px;
+    background: var(--surface);
+    border: 1px solid var(--outline);
+    border-radius: 24px;
+    padding: 32px 28px;
+    text-align: center;
+  }
+  .mark {
+    width: 72px; height: 72px; margin: 0 auto 20px;
+    border-radius: 24px;
+    background: linear-gradient(135deg, var(--violet), var(--violet-2));
+    display: grid; place-items: center;
+    font-size: 32px;
+  }
+  h1 { font-size: 24px; line-height: 1.25; margin: 0 0 8px; letter-spacing: -0.5px; }
+  p.sub { color: var(--muted); margin: 0 0 24px; font-size: 15px; }
+  .code-box {
+    background: var(--surface-2);
+    border-radius: 16px;
+    padding: 18px;
+    margin-bottom: 22px;
+  }
+  .code-label { font-size: 10px; letter-spacing: 1.2px; color: var(--muted); text-transform: uppercase; }
+  .code { font-size: 26px; font-weight: 700; letter-spacing: 6px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .btn {
+    display: block; width: 100%;
+    padding: 15px 18px;
+    border-radius: 16px;
+    border: 0;
+    font-size: 16px; font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    margin-bottom: 10px;
+    font-family: inherit;
+  }
+  .btn-primary { background: var(--violet); color: #fff; }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--outline); }
+  .members { text-align: left; margin: 0 0 22px; padding: 0; list-style: none; }
+  .members li {
+    display: flex; align-items: center; gap: 12px;
+    padding: 9px 12px; border-radius: 12px; background: var(--surface-2); margin-bottom: 7px;
+  }
+  .dot {
+    width: 30px; height: 30px; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 12px; font-weight: 700; color: #fff; flex: none;
+  }
+  .hint { color: var(--muted); font-size: 13px; margin: 18px 0 0; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="mark" aria-hidden="true">🤝</div>
+
+    <h1 id="title">You've been invited</h1>
+    <p class="sub" id="subtitle">Open the invite in Splits and pick your name.</p>
+
+    <ul class="members hidden" id="members"></ul>
+
+    <div class="code-box">
+      <div class="code-label">Invite code</div>
+      <div class="code" id="code">— — — —</div>
+    </div>
+
+    <a class="btn btn-primary" id="open" href="#">Open in Splits</a>
+    <button class="btn btn-ghost" id="copy" type="button">Copy code</button>
+
+    <p class="hint">
+      Don't have the app? Install Splits on Android or iOS, then enter the code above from the
+      home screen — no sign-up and no phone number required.
+    </p>
+  </main>
+
+<script>
+(function () {
+  // Fill these in to show the group's real name and participants on this page.
+  // The anon key is safe here: every table has RLS on with no policies, so this key can only
+  // call splits_resolve_invite, which already requires knowing the invite code.
+  var SUPABASE_URL = "";
+  var SUPABASE_ANON_KEY = "";
+
+  var ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+  function readCode() {
+    // Accept #CODE, ?c=CODE, or a trailing /CODE path segment.
+    var raw = location.hash.replace(/^#/, "") ||
+              new URLSearchParams(location.search).get("c") ||
+              location.pathname.replace(/\/+$/, "").split("/").pop() || "";
+    var cleaned = raw.toUpperCase().split("").filter(function (ch) {
+      return ALPHABET.indexOf(ch) !== -1;
+    }).join("");
+    return cleaned.length === 8 ? cleaned : null;
+  }
+
+  var code = readCode();
+  var codeEl = document.getElementById("code");
+  var openEl = document.getElementById("open");
+  var copyEl = document.getElementById("copy");
+
+  if (!code) {
+    document.getElementById("title").textContent = "This invite link looks incomplete";
+    document.getElementById("subtitle").textContent =
+      "Ask whoever shared it to send the full link, or type the 8-character code into the app.";
+    codeEl.textContent = "—";
+    openEl.classList.add("hidden");
+    copyEl.classList.add("hidden");
+    return;
+  }
+
+  codeEl.textContent = code.slice(0, 4) + " " + code.slice(4);
+  openEl.href = "splits://join/" + code;
+
+  copyEl.addEventListener("click", function () {
+    navigator.clipboard.writeText(code).then(function () {
+      copyEl.textContent = "Copied";
+      setTimeout(function () { copyEl.textContent = "Copy code"; }, 1600);
+    });
+  });
+
+  // Optional enrichment: show who's already in the group.
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
+
+  fetch(SUPABASE_URL.replace(/\/+$/, "") + "/rest/v1/rpc/splits_resolve_invite", {
+    method: "POST",
+    headers: {
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ p_invite_code: code })
+  })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (data) {
+    if (!data || !data.found || !data.groups || !data.groups.length) return;
+
+    var group = data.groups[0];
+    document.querySelector(".mark").textContent = group.emoji || "🤝";
+    document.getElementById("title").textContent = "Join " + group.name;
+
+    var members = (data.members || []).filter(function (m) { return !m.deleted; });
+    if (!members.length) return;
+
+    document.getElementById("subtitle").textContent =
+      "Open Splits and tap your name to join.";
+
+    var palette = ["#7c5cff","#31d0aa","#ff8a5c","#4fa9ff","#ffc24b","#f06bb0","#66d46b","#9b7bff","#2fc3d6","#ff6b6b"];
+    var list = document.getElementById("members");
+    members.forEach(function (m) {
+      var initials = m.name.trim().split(/\s+/).slice(0, 2)
+        .map(function (part) { return part[0]; }).join("").toUpperCase();
+      var li = document.createElement("li");
+      var dot = document.createElement("span");
+      dot.className = "dot";
+      dot.style.background = palette[Math.abs(m.color_index || 0) % palette.length];
+      dot.textContent = initials || "?";
+      var name = document.createElement("span");
+      name.textContent = m.name + (m.claimed_by_device_id ? " · joined" : "");
+      li.appendChild(dot);
+      li.appendChild(name);
+      list.appendChild(li);
+    });
+    list.classList.remove("hidden");
+  })
+  .catch(function () { /* The page is useful without this; stay quiet. */ });
+})();
+</script>
+</body>
+</html>

@@ -42,10 +42,13 @@ fun parseInvite(rawLink: String?): String? {
 }
 
 /**
- * The public page that resolves an invite in a browser. It is swapped for the real host in
- * phase two; the `splits://` fallback below always works even before that page exists.
+ * The public page that resolves an invite in a browser. Served from `docs/join/` in this repo
+ * via GitHub Pages, so there is no hosting bill and nothing to deploy separately.
+ *
+ * The `splits://` deep link below is what actually opens the app; the web page exists so a
+ * shared link still means something to someone who doesn't have Splits installed yet.
  */
-const val INVITE_WEB_BASE = "https://kanishk-splits.pages.dev/join"
+const val INVITE_WEB_BASE = "https://kanishk-gangwar.github.io/Splits/join"
 
 fun inviteLink(code: String): String = "$INVITE_WEB_BASE#$code"
 

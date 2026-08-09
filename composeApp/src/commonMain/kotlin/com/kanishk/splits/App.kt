@@ -24,6 +24,7 @@ import androidx.navigation.toRoute
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kanishk.splits.data.SplitsRepository
 import com.kanishk.splits.data.createSqlDriver
+import com.kanishk.splits.data.sync.SyncEngine
 import com.kanishk.splits.db.SplitsDatabase
 import com.kanishk.splits.ui.CreateGroupRoute
 import com.kanishk.splits.ui.ExpenseEditorRoute
@@ -46,13 +47,25 @@ val LocalRepository = staticCompositionLocalOf<SplitsRepository> {
     error("No SplitsRepository in scope")
 }
 
+val LocalSyncEngine = staticCompositionLocalOf<SyncEngine> {
+    error("No SyncEngine in scope")
+}
+
 @Composable
 fun App() {
     // One driver, one database, for the life of the process.
     val repository = remember { SplitsRepository(SplitsDatabase(createSqlDriver())) }
+    val syncEngine = remember { SyncEngine(repository) }
     val themePref by repository.observeThemeMode().collectAsStateWithLifecycle("system")
 
-    CompositionLocalProvider(LocalRepository provides repository) {
+    // Catch up with the server once on launch. Failing here is silent by design: the UI is
+    // already rendering local data, and pull-to-refresh gives the user an explicit retry.
+    LaunchedEffect(Unit) { syncEngine.syncNow() }
+
+    CompositionLocalProvider(
+        LocalRepository provides repository,
+        LocalSyncEngine provides syncEngine,
+    ) {
         SplitsTheme(mode = ThemeMode.fromPref(themePref)) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 SplitsNavHost()

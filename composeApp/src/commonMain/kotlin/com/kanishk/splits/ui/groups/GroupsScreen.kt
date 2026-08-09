@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kanishk.splits.LocalRepository
+import com.kanishk.splits.LocalSyncEngine
 import com.kanishk.splits.data.overallPosition
 import com.kanishk.splits.model.GroupCard
 import com.kanishk.splits.model.formatMinor
@@ -59,6 +60,8 @@ import com.kanishk.splits.ui.components.EmptyState
 import com.kanishk.splits.ui.components.GlyphTile
 import com.kanishk.splits.ui.components.SegmentedControl
 import com.kanishk.splits.ui.components.SplitsCard
+import com.kanishk.splits.ui.components.SyncFailureStrip
+import com.kanishk.splits.ui.components.SyncRefreshBox
 import com.kanishk.splits.ui.components.VSpace
 import com.kanishk.splits.ui.theme.SplitsTheme
 import com.kanishk.splits.ui.theme.avatarColor
@@ -73,6 +76,7 @@ fun GroupsScreen(
     onJoinWithCode: (String) -> Unit,
 ) {
     val repository = LocalRepository.current
+    val syncEngine = LocalSyncEngine.current
     val scope = rememberCoroutineScope()
     val cards by repository.observeGroupCards().collectAsStateWithLifecycle(emptyList())
 
@@ -98,6 +102,7 @@ fun GroupsScreen(
             }
         },
     ) { padding ->
+        SyncRefreshBox(Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
@@ -138,6 +143,8 @@ fun GroupsScreen(
                     }
                 }
             }
+
+            item { SyncFailureStrip() }
 
             if (cards.isNotEmpty()) {
                 item { OverallCard(cards) }
@@ -180,6 +187,7 @@ fun GroupsScreen(
                 )
             }
         }
+        }
     }
 
     sheetTarget?.let { card ->
@@ -210,7 +218,11 @@ fun GroupsScreen(
             groupName = card.group.name,
             onDismiss = { confirmDelete = null },
             onConfirm = {
-                scope.launch { repository.deleteGroup(card.group.id) }
+                scope.launch {
+                    if (syncEngine.deleteGroupEverywhere(card.group.id)) {
+                        repository.deleteGroup(card.group.id)
+                    }
+                }
                 confirmDelete = null
             },
         )

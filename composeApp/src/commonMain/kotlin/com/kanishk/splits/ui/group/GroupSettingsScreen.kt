@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kanishk.splits.LocalRepository
+import com.kanishk.splits.LocalSyncEngine
 import com.kanishk.splits.model.SupportedCurrencies
 import com.kanishk.splits.ui.components.Avatar
 import com.kanishk.splits.ui.components.SectionLabel
@@ -68,6 +69,7 @@ fun GroupSettingsScreen(
     onLeftGroupList: () -> Unit,
 ) {
     val repository = LocalRepository.current
+    val syncEngine = LocalSyncEngine.current
     val scope = rememberCoroutineScope()
     val detail by repository.observeGroupDetail(groupId).collectAsStateWithLifecycle(null)
 
@@ -400,8 +402,10 @@ fun GroupSettingsScreen(
             onDismiss = { confirmDelete = false },
             onConfirm = {
                 scope.launch {
-                    repository.deleteGroup(groupId)
-                    onLeftGroupList()
+                    if (syncEngine.deleteGroupEverywhere(groupId)) {
+                        repository.deleteGroup(groupId)
+                        onLeftGroupList()
+                    }
                 }
                 confirmDelete = false
             },

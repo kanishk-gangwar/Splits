@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Splits</title>
+<meta name="description" content="Split expenses with friends. No accounts, no phone numbers — share a link and pick your name.">
+<style>
+  :root {
+    --bg: #0b0d14; --surface: #151824; --surface-2: #1c2030; --outline: #232839;
+    --text: #e9eaf2; --muted: #9aa0b8; --violet: #7c5cff; --violet-2: #9e5cff; --mint: #31d0aa;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f6fb; --surface: #ffffff; --surface-2: #f1f1f8; --outline: #e6e7ef;
+      --text: #14161f; --muted: #5f6478; --violet: #6448e8; --violet-2: #9a5cf0; --mint: #0f9d77;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    min-height: 100dvh; display: grid; place-items: center; padding: 32px 20px;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { width: 100%; max-width: 560px; }
+  .mark {
+    width: 76px; height: 76px; border-radius: 26px;
+    background: linear-gradient(135deg, var(--violet), var(--violet-2));
+    display: grid; place-items: center; font-size: 34px; margin-bottom: 26px;
+  }
+  h1 { font-size: 40px; line-height: 1.1; letter-spacing: -1.4px; margin: 0 0 12px; }
+  .lede { color: var(--muted); font-size: 18px; margin: 0 0 36px; }
+  .grid { display: grid; gap: 12px; }
+  .item {
+    background: var(--surface); border: 1px solid var(--outline);
+    border-radius: 18px; padding: 18px 20px;
+  }
+  .item h2 { font-size: 15px; margin: 0 0 4px; letter-spacing: -0.2px; }
+  .item p { margin: 0; color: var(--muted); font-size: 14px; }
+  footer { margin-top: 36px; color: var(--muted); font-size: 14px; }
+  a { color: var(--violet); }
+  @media (prefers-color-scheme: dark) { a { color: #b9a6ff; } }
+</style>
+</head>
+<body>
+  <main>
+    <div class="mark" aria-hidden="true">🤝</div>
+    <h1>Splits</h1>
+    <p class="lede">
+      Split expenses with friends on Android and iOS. No accounts, no phone numbers —
+      share a link and everyone picks their own name.
+    </p>
+
+    <div class="grid">
+      <div class="item">
+        <h2>Share a link, pick your name</h2>
+        <p>Opening an invite shows the group's participants. Tap whichever one is you.</p>
+      </div>
+      <div class="item">
+        <h2>Settlements aren't spending</h2>
+        <p>Paying someone back updates the balance but stays out of the group total.</p>
+      </div>
+      <div class="item">
+        <h2>Archive, hide, or delete</h2>
+        <p>Only the admin can delete a group. Anyone can hide it from their own device.</p>
+      </div>
+      <div class="item">
+        <h2>Works offline</h2>
+        <p>Everything is local first and reconciles with the server when you pull to refresh.</p>
+      </div>
+    </div>
+
+    <footer>
+      Source on <a href="https://github.com/kanishk-gangwar/Splits">GitHub</a>.
+      Built with Compose Multiplatform.
+    </footer>
+  </main>
+</body>
+</html>
