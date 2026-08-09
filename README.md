@@ -91,6 +91,11 @@ by a build phase, so no extra setup is needed. To run on a physical device, set 
 ./gradlew :composeApp:testDebugUnitTest
 ```
 
+## Going deeper
+
+[TECHNICAL.md](TECHNICAL.md) covers the architecture, the data model, how sync
+reconciles, the server security model, and the build's sharp edges.
+
 ## Notes on identity
 
 There is no login. Each install generates a random device id, and claiming a name in a group

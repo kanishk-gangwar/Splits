@@ -10,8 +10,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -62,7 +65,10 @@ import com.kanishk.splits.model.Expense
 import com.kanishk.splits.model.ExpenseKind
 import com.kanishk.splits.model.GroupDetail
 import com.kanishk.splits.model.Member
+import com.kanishk.splits.model.FULL_PERCENT
 import com.kanishk.splits.model.Split
+import com.kanishk.splits.model.SplitMode
+import com.kanishk.splits.model.planSplits
 import com.kanishk.splits.model.customCategoryId
 import com.kanishk.splits.model.formatDate
 import com.kanishk.splits.model.formatMinor
@@ -70,8 +76,6 @@ import com.kanishk.splits.model.minorToEditText
 import com.kanishk.splits.model.nowMillis
 import com.kanishk.splits.model.parseAmountToMinor
 import com.kanishk.splits.model.resolveCategory
-import com.kanishk.splits.model.splitByWeights
-import com.kanishk.splits.model.splitEvenly
 import com.kanishk.splits.model.symbolOf
 import com.kanishk.splits.ui.ExpenseEditorRoute
 import com.kanishk.splits.ui.components.Avatar
@@ -83,9 +87,7 @@ import com.kanishk.splits.ui.components.VSpace
 import com.kanishk.splits.ui.theme.categoryTint
 import kotlinx.coroutines.launch
 
-private enum class SplitMode { Equally, Exact, Percent }
-
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun ExpenseEditorScreen(
     route: ExpenseEditorRoute,
@@ -174,13 +176,13 @@ fun ExpenseEditorScreen(
     val isReimbursement = kind == ExpenseKind.REIMBURSEMENT
 
     val participants = current.members.filter { selected[it.id] == true }
-    val computedSplits = computeSplits(
+    val computedSplits = planSplits(
         kind = kind,
         amountMinor = amountMinor,
-        participants = participants,
+        participantIds = participants.map { it.id },
         paidToMemberId = paidTo,
-        splitMode = splitMode,
-        shareText = shareText,
+        mode = splitMode,
+        typed = shareText,
     )
     val splitTotal = computedSplits.sumOf { it.shareMinor }
     val splitBalanced = splitTotal == amountMinor
@@ -243,8 +245,10 @@ fun ExpenseEditorScreen(
                 Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.background)
-                    .navigationBarsPadding()
-                    .imePadding()
+                    // One combined inset, not two. The IME inset already spans the navigation
+                    // bar, so padding for both lifted the button a nav-bar's height too high —
+                    // which is what put it on top of the amount field.
+                    .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                     .padding(16.dp),
             ) {
                 Button(
@@ -262,19 +266,21 @@ fun ExpenseEditorScreen(
             }
         },
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            item {
-                AmountField(
-                    value = amountText,
-                    onValueChange = { amountText = it },
-                    currencyCode = currency,
-                )
-            }
+        Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
+            // The amount sits outside the scrolling area. It is the one field you always want
+            // in view while the keyboard is up; inside the list it could scroll away or end up
+            // behind the button.
+            AmountField(
+                value = amountText,
+                onValueChange = { amountText = it },
+                currencyCode = currency,
+            )
 
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
             item {
                 SegmentedControl(
                     options = listOf("Expense", "Settlement"),
@@ -372,6 +378,7 @@ fun ExpenseEditorScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+            }
         }
     }
 
@@ -447,54 +454,6 @@ fun ExpenseEditorScreen(
             },
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         )
-    }
-}
-
-// -------------------------------------------------------------- split maths --
-
-/**
- * Turns the form into concrete per-member shares. A settlement is modelled as a one-sided
- * split — the whole amount lands on the recipient — which is exactly what makes it cancel
- * out the debt without touching the group's spend.
- */
-private fun computeSplits(
-    kind: ExpenseKind,
-    amountMinor: Long,
-    participants: List<Member>,
-    paidToMemberId: String?,
-    splitMode: SplitMode,
-    shareText: Map<String, String>,
-): List<Split> {
-    if (kind == ExpenseKind.REIMBURSEMENT) {
-        val to = paidToMemberId ?: return emptyList()
-        if (amountMinor <= 0) return emptyList()
-        return listOf(Split(to, amountMinor))
-    }
-
-    if (participants.isEmpty() || amountMinor <= 0) return emptyList()
-
-    return when (splitMode) {
-        SplitMode.Equally -> {
-            splitEvenly(amountMinor, participants.size)
-                .mapIndexed { index, share -> Split(participants[index].id, share) }
-        }
-
-        SplitMode.Exact -> participants.map { member ->
-            Split(member.id, parseAmountToMinor(shareText[member.id].orEmpty()) ?: 0L)
-        }
-
-        SplitMode.Percent -> {
-            // Percentages are held to two decimals, so weights are in hundredths of a percent.
-            val weights = participants.map { member ->
-                parseAmountToMinor(shareText[member.id].orEmpty()) ?: 0L
-            }
-            if (weights.sum() == 0L) {
-                emptyList()
-            } else {
-                splitByWeights(amountMinor, weights)
-                    .mapIndexed { index, share -> Split(participants[index].id, share) }
-            }
-        }
     }
 }
 
@@ -771,25 +730,27 @@ private fun SplitSection(
             options = listOf("Equally", "Exact", "Percent"),
             selectedIndex = splitMode.ordinal,
             onSelect = { index ->
-                val mode = SplitMode.entries[index]
-                // Seed the fields from the current equal split so the user edits, not types from zero.
-                if (mode != SplitMode.Equally) {
-                    computedSplits.forEach { split ->
-                        if (shareText[split.memberId].isNullOrEmpty()) {
-                            shareText[split.memberId] = if (mode == SplitMode.Exact) {
-                                minorToEditText(split.shareMinor)
-                            } else {
-                                minorToEditText(
-                                    if (amountMinor == 0L) 0L else split.shareMinor * 10_000 / amountMinor
-                                )
-                            }
-                        }
-                    }
-                }
-                onModeChange(mode)
+                // Fields stay empty on purpose. An empty row is an *automatic* row that shows
+                // its computed share as a placeholder; pre-filling every row would make them
+                // all look hand-entered and defeat the redistribution.
+                onModeChange(SplitMode.entries[index])
             },
             modifier = Modifier.fillMaxWidth(),
         )
+
+        if (splitMode != SplitMode.Equally) {
+            VSpace(8.dp)
+            Text(
+                text = if (splitMode == SplitMode.Exact) {
+                    "Type an amount for anyone you want to fix. The rest is shared evenly across the others."
+                } else {
+                    "Type a percentage for anyone you want to fix. The remainder is split across the others."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+        }
 
         VSpace(12.dp)
 
@@ -804,7 +765,13 @@ private fun SplitSection(
                 ) {
                     Checkbox(
                         checked = isIn,
-                        onCheckedChange = { selected[member.id] = it },
+                        onCheckedChange = { checked ->
+                            selected[member.id] = checked
+                            // Release any pinned amount when someone leaves the split, or a
+                            // number from a row that is no longer included keeps eating into
+                            // the total.
+                            if (!checked) shareText.remove(member.id)
+                        },
                     )
                     Avatar(member.name, member.colorIndex, size = 32.dp)
                     Text(
@@ -821,11 +788,28 @@ private fun SplitSection(
                     )
 
                     if (isIn && splitMode != SplitMode.Equally) {
+                        // An empty field means this row is worked out automatically, and its
+                        // computed share shows as a greyed placeholder — so at a glance you can
+                        // tell what you pinned from what the app filled in around you.
+                        val autoHint = when {
+                            splitMode == SplitMode.Exact -> minorToEditText(share)
+                            amountMinor > 0 -> minorToEditText(share * FULL_PERCENT / amountMinor)
+                            else -> "0"
+                        }
+
                         OutlinedTextField(
                             value = shareText[member.id].orEmpty(),
                             onValueChange = { input ->
                                 val cleaned = input.filter { it.isDigit() || it == '.' }
                                 if (cleaned.count { it == '.' } <= 1) shareText[member.id] = cleaned
+                            },
+                            placeholder = {
+                                Text(
+                                    autoHint,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        .copy(alpha = 0.7f),
+                                )
                             },
                             singleLine = true,
                             shape = RoundedCornerShape(10.dp),
