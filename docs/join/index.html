@@ -62,7 +62,8 @@
     margin-bottom: 22px;
   }
   .code-label { font-size: 10px; letter-spacing: 1.2px; color: var(--muted); text-transform: uppercase; }
-  .code { font-size: 26px; font-weight: 700; letter-spacing: 6px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  /* Sized for 12-character codes in groups of four; wraps at a group boundary if it must. */
+  .code { font-size: 22px; font-weight: 700; letter-spacing: 4px; margin-top: 6px; font-variant-numeric: tabular-nums; }
   .btn {
     display: block; width: 100%;
     padding: 15px 18px;
@@ -131,7 +132,10 @@
     var cleaned = raw.toUpperCase().split("").filter(function (ch) {
       return ALPHABET.indexOf(ch) !== -1;
     }).join("");
-    return cleaned.length === 8 ? cleaned : null;
+    // Kept in step with INVITE_CODE_LENGTHS in Ids.kt: 12 since codes were lengthened,
+    // 8 from links minted by older builds. This page said `=== 8` for a while after the
+    // app moved to 12, which made every fresh invite link land on "looks incomplete".
+    return cleaned.length === 8 || cleaned.length === 12 ? cleaned : null;
   }
 
   var code = readCode();
@@ -142,14 +146,15 @@
   if (!code) {
     document.getElementById("title").textContent = "This invite link looks incomplete";
     document.getElementById("subtitle").textContent =
-      "Ask whoever shared it to send the full link, or type the 8-character code into the app.";
+      "Ask whoever shared it to send the full link, or type the code from the invite into the app.";
     codeEl.textContent = "—";
     openEl.classList.add("hidden");
     copyEl.classList.add("hidden");
     return;
   }
 
-  codeEl.textContent = code.slice(0, 4) + " " + code.slice(4);
+  // Groups of four, same as the app's share sheet — works for 12 and legacy 8 alike.
+  codeEl.textContent = code.match(/.{1,4}/g).join(" ");
   openEl.href = "splits://join/" + code;
 
   copyEl.addEventListener("click", function () {

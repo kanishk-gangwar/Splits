@@ -464,6 +464,14 @@ arrive in — `splits://join/CODE`, a web link with the code in the fragment or 
 code pasted by hand — because a link that has been through a chat app, an email client and a
 copy-paste is not guaranteed to arrive intact.
 
+Typed input has shapes of its own, so the join-by-code dialog goes through `parseInviteInput`,
+which forgives the grouped-by-four spacing the share sheet and the web page display, lowercase
+from a keyboard, and a whole pasted link or message. Neither the dialog nor the landing page in
+`docs/join/` spells out a code length of its own — each has independently hard-coded
+`length == 8` at some point, and each broke silently when codes moved to 12 characters. The
+accepted lengths live in `INVITE_CODE_LENGTHS` next to the generator; the page mirrors them by
+hand and its comment says so.
+
 `inviteShareMessage` deliberately bundles `APP_DOWNLOAD_URL` with the invite. Most people
 receiving one will not have the app, and expecting the sender to remember to paste a second link
 is a good way to have nobody join.

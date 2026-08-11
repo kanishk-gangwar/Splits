@@ -35,8 +35,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import com.kanishk.splits.LocalRepository
-import com.kanishk.splits.data.normaliseInviteCode
 import com.kanishk.splits.model.GroupCard
+import com.kanishk.splits.parseInviteInput
 import com.kanishk.splits.ui.components.VSpace
 
 /**
@@ -166,8 +166,10 @@ fun JoinWithCodeDialog(
     onSubmit: (String) -> Unit,
 ) {
     var code by remember { mutableStateOf("") }
-    val normalised = normaliseInviteCode(code)
-    val valid = normalised.length == 8
+    // Length is not checked here — that is parseInviteInput's job, precisely because this
+    // dialog once said `length == 8` while the generator had moved on to 12, and no code
+    // could enable Continue. Legacy 8-character codes still pass, and so does a pasted link.
+    val submitted = parseInviteInput(code)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -175,14 +177,14 @@ fun JoinWithCodeDialog(
         text = {
             Column {
                 Text(
-                    "Enter the 8-character code from the invite.",
+                    "Enter the 12-character code from the invite, or paste the invite link.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 VSpace(12.dp)
                 OutlinedTextField(
                     value = code,
-                    onValueChange = { code = it.take(12) },
+                    onValueChange = { code = it },
                     singleLine = true,
                     label = { Text("Invite code") },
                     keyboardOptions = KeyboardOptions(
@@ -193,7 +195,10 @@ fun JoinWithCodeDialog(
             }
         },
         confirmButton = {
-            TextButton(enabled = valid, onClick = { onSubmit(normalised) }) { Text("Continue") }
+            TextButton(
+                enabled = submitted != null,
+                onClick = { submitted?.let(onSubmit) },
+            ) { Text("Continue") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }

@@ -64,6 +64,16 @@ fun parseInvite(rawLink: String?): String? {
 }
 
 /**
+ * What the join-by-code dialog accepts. A bare code is tried first — normalising forgives
+ * case and the grouped-by-four spacing that both the share sheet and the web page display
+ * codes in, which [parseInvite] deliberately refuses ("ABCD EFGH JKMN" is three tokens to it,
+ * none of them saying "join"). Whatever doesn't normalise to a code is handed to
+ * [parseInvite], so pasting the whole link or the whole invite message works too.
+ */
+fun parseInviteInput(raw: String): String? =
+    normaliseInviteCode(raw).takeIf(::isInviteCodeShaped) ?: parseInvite(raw)
+
+/**
  * The public page that resolves an invite in a browser. Served from `docs/join/` in this repo
  * via GitHub Pages, so there is no hosting bill and nothing to deploy separately.
  *
