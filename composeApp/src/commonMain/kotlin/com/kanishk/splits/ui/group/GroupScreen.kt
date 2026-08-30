@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -186,11 +185,12 @@ fun GroupScreen(
             }
 
             item {
+                val owing = summary.settlements.size
                 SegmentedControl(
                     options = listOf(
                         "Expenses",
                         "Balances",
-                        "People ${current.joinedCount}/${current.members.size}",
+                        if (owing > 0) "Settle up $owing" else "Settle up",
                     ),
                     selectedIndex = tab,
                     onSelect = { tab = it },
@@ -199,13 +199,11 @@ fun GroupScreen(
             }
 
             if (tab == 2) {
-                peopleTab(
+                settleUpTab(
                     detail = current,
                     summary = summary,
-                    myMemberId = me?.id,
                     readOnly = readOnly,
-                    onPickIdentity = { showIdentityPicker = true },
-                    onShareInvite = { showInvite = true },
+                    onSettleUp = onSettleUp,
                 )
             } else if (tab == 0) {
                 if (current.members.size > 1 && current.expenses.isNotEmpty()) {
@@ -231,8 +229,6 @@ fun GroupScreen(
                     detail = current,
                     summary = summary,
                     myMemberId = me?.id,
-                    readOnly = readOnly,
-                    onSettleUp = onSettleUp,
                 )
             }
         }
@@ -702,143 +698,12 @@ private fun ExpenseRow(
     }
 }
 
-// ------------------------------------------------------------------- people --
-
-/**
- * Who is in the group and who has actually turned up. The distinction matters: a participant
- * exists as soon as someone types their name, but they have not *joined* until a device claims
- * it, and until then nobody is seeing their balance.
- */
-private fun androidx.compose.foundation.lazy.LazyListScope.peopleTab(
-    detail: GroupDetail,
-    summary: com.kanishk.splits.model.GroupSummary,
-    myMemberId: String?,
-    readOnly: Boolean,
-    onPickIdentity: () -> Unit,
-    onShareInvite: () -> Unit,
-) {
-    val waiting = detail.availableMembers
-
-    item {
-        SplitsCard(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "${detail.joinedCount} of ${detail.members.size} joined",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            text = when {
-                                detail.members.isEmpty() -> "Nobody has been added yet."
-                                waiting.isEmpty() -> "Everyone has claimed their name."
-                                else -> "${waiting.size} name${if (waiting.size == 1) "" else "s"} still unclaimed."
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (waiting.isNotEmpty() && !readOnly) {
-                        TextButton(onClick = onShareInvite) { Text("Invite") }
-                    }
-                }
-
-                if (myMemberId == null && waiting.isNotEmpty() && !readOnly) {
-                    VSpace(12.dp)
-                    Button(
-                        onClick = onPickIdentity,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Pick your name") }
-                }
-            }
-        }
-    }
-
-    if (detail.joinedMembers.isNotEmpty()) {
-        item {
-            Text(
-                "Joined",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp, start = 4.dp),
-            )
-        }
-        items(detail.joinedMembers, key = { "joined-${it.id}" }) { member ->
-            PersonRow(
-                member = member,
-                isMe = member.id == myMemberId,
-                spentMinor = summary.spentBy(member.id),
-                currencyCode = detail.group.currencyCode,
-            )
-        }
-    }
-
-    if (waiting.isNotEmpty()) {
-        item {
-            Text(
-                "Not joined yet",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp, start = 4.dp),
-            )
-        }
-        items(waiting, key = { "waiting-${it.id}" }) { member ->
-            PersonRow(
-                member = member,
-                isMe = false,
-                spentMinor = summary.spentBy(member.id),
-                currencyCode = detail.group.currencyCode,
-            )
-        }
-    }
-}
-
-/**
- * The section header above already says whether this person has joined, so the line under
- * the name is free to carry the thing you actually came to look up: their own spend.
- */
-@Composable
-private fun PersonRow(
-    member: Member,
-    isMe: Boolean,
-    spentMinor: Long,
-    currencyCode: String,
-) {
-    SplitsCard(Modifier.fillMaxWidth()) {
-        Row(
-            Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Avatar(member.name, member.colorIndex, size = 38.dp, ring = isMe)
-            Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                Text(
-                    if (isMe) "${member.name} (you)" else member.name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = "spent ${formatMinor(spentMinor, currencyCode)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-        }
-    }
-}
-
 // ----------------------------------------------------------------- balances --
 
 private fun androidx.compose.foundation.lazy.LazyListScope.balancesTab(
     detail: GroupDetail,
     summary: com.kanishk.splits.model.GroupSummary,
     myMemberId: String?,
-    readOnly: Boolean,
-    onSettleUp: (String, String, Long) -> Unit,
 ) {
     val currency = detail.group.currencyCode
 
@@ -900,73 +765,91 @@ private fun androidx.compose.foundation.lazy.LazyListScope.balancesTab(
             }
         }
     }
+}
 
-    if (summary.settlements.isNotEmpty()) {
-        item {
-            Text(
-                "Settle up in ${summary.settlements.size} payment${if (summary.settlements.size == 1) "" else "s"}",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 10.dp, start = 4.dp),
-            )
-        }
+// ---------------------------------------------------------------- settle up --
 
-        items(summary.settlements, key = { "s-${it.fromMemberId}-${it.toMemberId}" }) { settlement ->
-            val from = detail.member(settlement.fromMemberId)
-            val to = detail.member(settlement.toMemberId)
-            SplitsCard(Modifier.fillMaxWidth()) {
-                Row(
-                    Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Avatar(from?.name ?: "?", from?.colorIndex ?: 0, size = 32.dp)
-                    Icon(
-                        Icons.AutoMirrored.Outlined.ArrowForward,
-                        contentDescription = "pays",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 6.dp).size(16.dp),
-                    )
-                    Avatar(to?.name ?: "?", to?.colorIndex ?: 0, size = 32.dp)
+/**
+ * The shortest list of payments that clears the group, on its own tab. It used to sit under
+ * every member's balance, which meant scrolling past all of them to reach the thing you were
+ * going to act on — worse the bigger the group, which is exactly when it matters most.
+ */
+private fun androidx.compose.foundation.lazy.LazyListScope.settleUpTab(
+    detail: GroupDetail,
+    summary: com.kanishk.splits.model.GroupSummary,
+    readOnly: Boolean,
+    onSettleUp: (String, String, Long) -> Unit,
+) {
+    val currency = detail.group.currencyCode
 
-                    Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                        Text(
-                            "${from?.name ?: "?"} pays ${to?.name ?: "?"}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        MoneyText(
-                            amountMinor = settlement.amountMinor,
-                            currencyCode = currency,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 15.sp,
-                        )
-                    }
-
-                    if (!readOnly) {
-                        TextButton(
-                            onClick = {
-                                onSettleUp(
-                                    settlement.fromMemberId,
-                                    settlement.toMemberId,
-                                    settlement.amountMinor,
-                                )
-                            },
-                        ) {
-                            Text("Record")
-                        }
-                    }
-                }
-            }
-        }
-    } else {
+    if (summary.settlements.isEmpty()) {
         item {
             EmptyState(
                 glyph = "🎉",
                 title = "Everyone's square",
                 subtitle = "No outstanding balances in this group.",
             )
+        }
+        return
+    }
+
+    item {
+        Text(
+            "The fewest payments that clear the group — " +
+                "${summary.settlements.size} in all.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 2.dp, start = 4.dp, end = 4.dp),
+        )
+    }
+
+    items(summary.settlements, key = { "s-${it.fromMemberId}-${it.toMemberId}" }) { settlement ->
+        val from = detail.member(settlement.fromMemberId)
+        val to = detail.member(settlement.toMemberId)
+        SplitsCard(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Avatar(from?.name ?: "?", from?.colorIndex ?: 0, size = 32.dp)
+                Icon(
+                    Icons.AutoMirrored.Outlined.ArrowForward,
+                    contentDescription = "pays",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 6.dp).size(16.dp),
+                )
+                Avatar(to?.name ?: "?", to?.colorIndex ?: 0, size = 32.dp)
+
+                Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                    Text(
+                        "${from?.name ?: "?"} pays ${to?.name ?: "?"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    MoneyText(
+                        amountMinor = settlement.amountMinor,
+                        currencyCode = currency,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 15.sp,
+                    )
+                }
+
+                if (!readOnly) {
+                    TextButton(
+                        onClick = {
+                            onSettleUp(
+                                settlement.fromMemberId,
+                                settlement.toMemberId,
+                                settlement.amountMinor,
+                            )
+                        },
+                    ) {
+                        Text("Record")
+                    }
+                }
+            }
         }
     }
 }

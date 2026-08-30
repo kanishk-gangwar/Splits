@@ -505,9 +505,14 @@ device claims it — and until then nobody is seeing their balance on their own 
 different things and the UI keeps them apart.
 
 `GroupDetail` exposes `joinedMembers`, `availableMembers`, `joinedCount` and `everyoneJoined()`.
-The People tab in a group shows the split ("3 of 5 joined") with the two lists underneath, and
-the tab label itself carries the count so it is visible without opening it. The join screen
-leads with the same number.
+Group settings splits its participant list under **Joined** and **Not joined yet** headings,
+each carrying its own count, so who is still missing reads at a glance instead of from the
+second line of every row. The join screen leads with the same number.
+
+This used to be a third tab on the group screen as well, which said the same thing twice. That
+tab is now **Settle up**: the settlement list used to sit below every member balance, so
+reaching the one thing you were going to act on meant scrolling past everyone — worst in a big
+group, which is exactly when settling up matters most.
 
 `everyoneJoined()` deliberately returns false for an empty group, so `0 == 0` never reads as
 "everyone is here". `MembershipTest` covers that along with release, admin transfer, and the

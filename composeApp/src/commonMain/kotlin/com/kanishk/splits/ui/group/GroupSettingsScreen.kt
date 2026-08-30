@@ -52,6 +52,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kanishk.splits.LocalRepository
 import com.kanishk.splits.LocalSyncEngine
+import com.kanishk.splits.model.GroupDetail
+import com.kanishk.splits.model.Member
 import com.kanishk.splits.model.SupportedCurrencies
 import com.kanishk.splits.ui.components.Avatar
 import com.kanishk.splits.ui.components.SectionLabel
@@ -263,70 +265,51 @@ fun GroupSettingsScreen(
                 }
             }
 
-            items(current.members, key = { it.id }) { member ->
-                SplitsCard(Modifier.fillMaxWidth()) {
-                    Row(
-                        Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Avatar(
-                            member.name,
-                            member.colorIndex,
-                            size = 38.dp,
-                            ring = member.id == me?.id,
-                        )
-                        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                            Text(
-                                if (member.id == me?.id) "${member.name} (you)" else member.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = buildString {
-                                    if (member.id == group.adminMemberId) append("admin · ")
-                                    append(if (member.isClaimed) "joined" else "not joined yet")
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        // Both controls are hidden rather than disabled when they do not apply.
-                        // A greyed-out delete on every row reads as "not right now"; these are
-                        // never yours to press, and the row is calmer without them.
-                        if (current.canRename(repository.deviceId, member.id)) {
-                            IconButton(
-                                onClick = { renaming = member.id to member.name },
-                                enabled = !readOnly,
-                            ) {
-                                Icon(
-                                    Icons.Outlined.Edit,
-                                    contentDescription = "Rename ${member.name}",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp),
-                                )
+            // Split by whether the name has actually been claimed. A flat list made everyone
+            // read the second line of every row to work out who is still missing; the two
+            // headings answer that at a glance, which matters most in a big group.
+            val joined = current.joinedMembers
+            val waiting = current.availableMembers
+
+            if (joined.isNotEmpty()) {
+                item { ParticipantSubheader("Joined", joined.size) }
+                items(joined, key = { "joined-${it.id}" }) { member ->
+                    ParticipantRow(
+                        member = member,
+                        detail = current,
+                        deviceId = repository.deviceId,
+                        isMe = member.id == me?.id,
+                        isAdminMember = member.id == group.adminMemberId,
+                        readOnly = readOnly,
+                        onRename = { renaming = member.id to member.name },
+                        onRemove = {
+                            scope.launch {
+                                val removed = repository.removeMember(groupId, member.id)
+                                if (!removed) removeBlocked = member.name
                             }
-                        }
-                        if (current.canRemove(repository.deviceId, member.id)) {
-                            IconButton(
-                                onClick = {
-                                    scope.launch {
-                                        val removed = repository.removeMember(groupId, member.id)
-                                        if (!removed) removeBlocked = member.name
-                                    }
-                                },
-                                enabled = !readOnly,
-                            ) {
-                                Icon(
-                                    Icons.Outlined.DeleteOutline,
-                                    contentDescription = "Remove ${member.name}",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp),
-                                )
+                        },
+                    )
+                }
+            }
+
+            if (waiting.isNotEmpty()) {
+                item { ParticipantSubheader("Not joined yet", waiting.size) }
+                items(waiting, key = { "waiting-${it.id}" }) { member ->
+                    ParticipantRow(
+                        member = member,
+                        detail = current,
+                        deviceId = repository.deviceId,
+                        isMe = false,
+                        isAdminMember = member.id == group.adminMemberId,
+                        readOnly = readOnly,
+                        onRename = { renaming = member.id to member.name },
+                        onRemove = {
+                            scope.launch {
+                                val removed = repository.removeMember(groupId, member.id)
+                                if (!removed) removeBlocked = member.name
                             }
-                        }
-                    }
+                        },
+                    )
                 }
             }
 
@@ -577,4 +560,76 @@ private fun NameDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
     )
+}
+
+@Composable
+private fun ParticipantSubheader(text: String, count: Int) {
+    Text(
+        "$text · $count",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 6.dp, start = 4.dp),
+    )
+}
+
+@Composable
+private fun ParticipantRow(
+    member: Member,
+    detail: GroupDetail,
+    deviceId: String?,
+    isMe: Boolean,
+    isAdminMember: Boolean,
+    readOnly: Boolean,
+    onRename: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    SplitsCard(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Avatar(member.name, member.colorIndex, size = 38.dp, ring = isMe)
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text(
+                    if (isMe) "${member.name} (you)" else member.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                // The heading above already says joined or not, so this line is only needed
+                // for the one thing it cannot say.
+                if (isAdminMember) {
+                    Text(
+                        "admin",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            // Both controls are hidden rather than disabled when they do not apply. A
+            // greyed-out delete on every row reads as "not right now"; these are never yours
+            // to press, and the row is calmer without them.
+            if (detail.canRename(deviceId, member.id)) {
+                IconButton(onClick = onRename, enabled = !readOnly) {
+                    Icon(
+                        Icons.Outlined.Edit,
+                        contentDescription = "Rename ${member.name}",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            if (detail.canRemove(deviceId, member.id)) {
+                IconButton(onClick = onRemove, enabled = !readOnly) {
+                    Icon(
+                        Icons.Outlined.DeleteOutline,
+                        contentDescription = "Remove ${member.name}",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+    }
 }
