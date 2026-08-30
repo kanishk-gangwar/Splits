@@ -2,10 +2,19 @@ package com.kanishk.splits.model
 
 import kotlin.math.min
 
-/** Net position of one member. Positive means the group owes them. */
+/**
+ * Everything one member's money looks like in a group.
+ *
+ * [netMinor] is the position — positive means the group owes them — and includes settlements,
+ * because a settlement genuinely moves money. [spentMinor] and [paidMinor] describe real
+ * expenses only: what this person consumed, and what they fronted at the till. Keeping
+ * settlements out of those two is what makes the members' spends add up to the group total.
+ */
 data class MemberBalance(
     val memberId: String,
     val netMinor: Long,
+    val spentMinor: Long = 0L,
+    val paidMinor: Long = 0L,
 ) {
     val isSettled: Boolean get() = netMinor == 0L
 }
@@ -21,10 +30,24 @@ data class Settlement(
 data class GroupSummary(
     val totalSpentMinor: Long,
     val balances: List<MemberBalance>,
-    val settlements: List<Settlement>,
 ) {
+    /**
+     * Deliberately lazy. The home screen keeps a summary per group but only ever reads
+     * balances, and working out the fewest payments is the one expensive thing in here.
+     */
+    val settlements: List<Settlement> by lazy { suggestSettlements(balances) }
+
     fun balanceOf(memberId: String?): Long =
         balances.firstOrNull { it.memberId == memberId }?.netMinor ?: 0L
+
+    fun of(memberId: String?): MemberBalance? =
+        balances.firstOrNull { it.memberId == memberId }
+
+    /** This person's own share of the group's expenses — "what did I actually spend?". */
+    fun spentBy(memberId: String?): Long = of(memberId)?.spentMinor ?: 0L
+
+    /** What this person fronted at the till, which is usually not what they spent. */
+    fun paidBy(memberId: String?): Long = of(memberId)?.paidMinor ?: 0L
 }
 
 /**
@@ -34,13 +57,23 @@ data class GroupSummary(
  */
 fun summarise(members: List<Member>, expenses: List<Expense>): GroupSummary {
     val net = LinkedHashMap<String, Long>()
-    members.forEach { net[it.id] = 0L }
+    val spent = LinkedHashMap<String, Long>()
+    val paid = LinkedHashMap<String, Long>()
+    members.forEach {
+        net[it.id] = 0L
+        spent[it.id] = 0L
+        paid[it.id] = 0L
+    }
 
     var totalSpent = 0L
 
     for (expense in expenses) {
         if (expense.kind == ExpenseKind.EXPENSE) {
             totalSpent += expense.amountMinor
+            paid[expense.paidByMemberId] = (paid[expense.paidByMemberId] ?: 0L) + expense.amountMinor
+            for (split in expense.splits) {
+                spent[split.memberId] = (spent[split.memberId] ?: 0L) + split.shareMinor
+            }
         }
         net[expense.paidByMemberId] = (net[expense.paidByMemberId] ?: 0L) + expense.amountMinor
         for (split in expense.splits) {
@@ -48,20 +81,103 @@ fun summarise(members: List<Member>, expenses: List<Expense>): GroupSummary {
         }
     }
 
-    val balances = net.map { (memberId, amount) -> MemberBalance(memberId, amount) }
+    val balances = net.map { (memberId, amount) ->
+        MemberBalance(
+            memberId = memberId,
+            netMinor = amount,
+            spentMinor = spent[memberId] ?: 0L,
+            paidMinor = paid[memberId] ?: 0L,
+        )
+    }
     return GroupSummary(
         totalSpentMinor = totalSpent,
         balances = balances,
-        settlements = suggestSettlements(balances),
     )
 }
 
 /**
- * Greedy min-cash-flow: repeatedly match the biggest debtor against the biggest creditor.
- * Produces at most (n - 1) transfers, which is what people actually want to see — not a
- * literal edge for every pairwise debt.
+ * The fewest payments that square the group up.
+ *
+ * Greedy matching (biggest debtor against biggest creditor) is the usual answer and it is
+ * *not* minimal: on [4, 3, -1, -3, -3] it spends four transfers where three will do, because
+ * it never notices that +3 and -3 cancel on their own. So instead, split the members into as
+ * many independent zero-sum groups as possible — every such split saves exactly one payment —
+ * and settle inside each group. A group of k people that cannot be split further always needs
+ * k - 1 transfers, which greedy does produce, so greedy is safe once the split is right.
+ *
+ * Finding the best split is subset-sum, i.e. exponential; [MaxExactPartition] is where we stop
+ * looking and fall back to plain greedy. Real groups are far smaller than that bound.
  */
 fun suggestSettlements(balances: List<MemberBalance>): List<Settlement> {
+    val active = balances.filter { it.netMinor != 0L }
+    if (active.isEmpty()) return emptyList()
+    return zeroSumGroups(active).flatMap { greedySettle(it) }
+}
+
+/**
+ * Above this many people with a non-zero balance the exact search costs 3^n and stops being
+ * worth it. Fifteen is already a very large group to be splitting a bill in.
+ */
+private const val MaxExactPartition = 15
+
+/**
+ * Splits members into the largest possible number of subsets that each sum to zero. One
+ * subset is always possible (everyone together, since balances sum to zero by construction).
+ */
+private fun zeroSumGroups(active: List<MemberBalance>): List<List<MemberBalance>> {
+    val n = active.size
+    if (n > MaxExactPartition) return listOf(active)
+
+    val full = (1 shl n) - 1
+    val sum = LongArray(1 shl n)
+    for (mask in 1..full) {
+        val low = mask.countTrailingZeroBits()
+        sum[mask] = sum[mask and (mask - 1)] + active[low].netMinor
+    }
+
+    // best[mask] = most zero-sum groups `mask` can be cut into, or -1 if it cannot be cut at
+    // all; taken[mask] = the group to peel off to achieve that. Every candidate group is
+    // anchored on the lowest member still in the mask, which is what keeps this at 3^n
+    // instead of enumerating every subset of every subset twice over.
+    val best = IntArray(1 shl n) { -1 }
+    val taken = IntArray(1 shl n)
+    best[0] = 0
+    for (mask in 1..full) {
+        if (sum[mask] != 0L) continue
+        val low = mask and (-mask)
+        val rest = mask xor low
+        var sub = rest
+        while (true) {
+            val group = sub or low
+            if (sum[group] == 0L) {
+                val remainder = best[mask xor group]
+                if (remainder >= 0 && remainder + 1 > best[mask]) {
+                    best[mask] = remainder + 1
+                    taken[mask] = group
+                }
+            }
+            if (sub == 0) break
+            sub = (sub - 1) and rest
+        }
+    }
+
+    if (best[full] <= 0) return listOf(active)
+
+    val groups = mutableListOf<List<MemberBalance>>()
+    var mask = full
+    while (mask != 0) {
+        val group = taken[mask]
+        groups += active.filterIndexed { index, _ -> (group shr index) and 1 == 1 }
+        mask = mask xor group
+    }
+    return groups
+}
+
+/**
+ * Repeatedly match the biggest debtor against the biggest creditor. Optimal within a group
+ * that has no zero-sum subset of its own, which is exactly what [zeroSumGroups] hands over.
+ */
+private fun greedySettle(balances: List<MemberBalance>): List<Settlement> {
     val debtors = balances.filter { it.netMinor < 0 }
         .map { it.memberId to -it.netMinor }
         .sortedByDescending { it.second }

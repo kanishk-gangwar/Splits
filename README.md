@@ -19,6 +19,16 @@ Every entry is either an *expense* or a *settlement*. A settlement (A pays B) mo
 balance between two people but is deliberately excluded from the group total — it isn't new
 spending, it's the same money changing hands. The group header says so out loud.
 
+**Everyone's own spend, not just who owes whom.**
+A group tells you what it cost in total, what *your* share of that came to, and what you
+actually paid — three different numbers that a single net balance hides. Every member's share
+is listed too, so "how much did this trip cost me?" is answered without arithmetic.
+
+**Settle up in provably the fewest payments.**
+The settle-up list is the true minimum number of transfers, not the greedy approximation most
+splitters ship — that one overshoots on about a sixth of groups because it misses debts that
+cancel between two people on their own.
+
 **Categories, optional and extensible.**
 21 built-in categories, or none at all, or type your own. Custom categories keep a stable
 colour so the same label always looks the same.

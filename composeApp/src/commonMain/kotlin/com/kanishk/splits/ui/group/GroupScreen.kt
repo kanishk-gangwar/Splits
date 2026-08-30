@@ -21,8 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Archive
-import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material3.Button
@@ -52,6 +50,7 @@ import com.kanishk.splits.LocalRepository
 import com.kanishk.splits.model.Expense
 import com.kanishk.splits.model.GroupDetail
 import com.kanishk.splits.model.Member
+import com.kanishk.splits.model.MemberBalance
 import com.kanishk.splits.model.ReimbursementCategory
 import com.kanishk.splits.model.dayKey
 import com.kanishk.splits.model.formatDayHeader
@@ -72,7 +71,7 @@ import com.kanishk.splits.ui.components.SplitsTopBar
 import com.kanishk.splits.ui.components.SyncRefreshBox
 import com.kanishk.splits.ui.components.VSpace
 import com.kanishk.splits.ui.components.balanceColor
-import com.kanishk.splits.ui.theme.SplitsTheme
+import com.kanishk.splits.ui.components.balanceContainerColor
 import com.kanishk.splits.ui.theme.categoryTint
 import kotlinx.coroutines.launch
 
@@ -171,9 +170,8 @@ fun GroupScreen(
             item {
                 GroupHeaderCard(
                     detail = current,
-                    myBalance = summary.balanceOf(me?.id),
+                    mine = summary.of(me?.id),
                     totalSpentMinor = summary.totalSpentMinor,
-                    isJoined = me != null,
                 )
             }
 
@@ -203,6 +201,7 @@ fun GroupScreen(
             if (tab == 2) {
                 peopleTab(
                     detail = current,
+                    summary = summary,
                     myMemberId = me?.id,
                     readOnly = readOnly,
                     onPickIdentity = { showIdentityPicker = true },
@@ -266,9 +265,8 @@ fun GroupScreen(
 @Composable
 private fun GroupHeaderCard(
     detail: GroupDetail,
-    myBalance: Long,
+    mine: MemberBalance?,
     totalSpentMinor: Long,
-    isJoined: Boolean,
 ) {
     val currency = detail.group.currencyCode
     SplitsCard(Modifier.fillMaxWidth()) {
@@ -280,39 +278,58 @@ private fun GroupHeaderCard(
                     MoneyText(
                         amountMinor = totalSpentMinor,
                         currencyCode = currency,
-                        fontSize = 28.sp,
+                        fontSize = 30.sp,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                 }
                 AvatarStack(detail.members, max = 5, size = 30.dp)
             }
 
-            if (isJoined) {
+            // The two numbers people actually come here for: what this trip cost *me*, and
+            // how much of it I fronted. Net position alone hides both.
+            if (mine != null) {
                 VSpace(16.dp)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    StatTile(
+                        label = "Your share",
+                        amountMinor = mine.spentMinor,
+                        currencyCode = currency,
+                        modifier = Modifier.weight(1f),
+                    )
+                    StatTile(
+                        label = "You paid",
+                        amountMinor = mine.paidMinor,
+                        currencyCode = currency,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                VSpace(10.dp)
+                val net = mine.netMinor
                 Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    color = balanceContainerColor(net),
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Row(
-                        Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = when {
-                                myBalance > 0 -> "You are owed"
-                                myBalance < 0 -> "You owe"
+                                net > 0 -> "You are owed"
+                                net < 0 -> "You owe"
                                 else -> "You're all settled up"
                             },
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = balanceColor(net),
                             modifier = Modifier.weight(1f),
                         )
-                        if (myBalance != 0L) {
+                        if (net != 0L) {
                             MoneyText(
-                                amountMinor = if (myBalance < 0) -myBalance else myBalance,
+                                amountMinor = if (net < 0) -net else net,
                                 currencyCode = currency,
-                                color = balanceColor(myBalance),
+                                color = balanceColor(net),
                                 fontSize = 18.sp,
                             )
                         }
@@ -330,6 +347,38 @@ private fun GroupHeaderCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+    }
+}
+
+/** One quiet label-over-amount cell. Two of these read faster than a sentence. */
+@Composable
+private fun StatTile(
+    label: String,
+    amountMinor: Long,
+    currencyCode: String,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(14.dp),
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.sp,
+                maxLines = 1,
+            )
+            VSpace(3.dp)
+            MoneyText(
+                amountMinor = amountMinor,
+                currencyCode = currencyCode,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 17.sp,
+            )
         }
     }
 }
@@ -584,23 +633,24 @@ private fun ExpenseRow(
                     overflow = TextOverflow.Ellipsis,
                 )
 
-                // Who this entry actually involves, without having to open it.
+                // Who this entry involves. The faces carry the names, so the line beside them
+                // only has to say how wide the split was.
                 val involved = expense.splits.mapNotNull { detail.member(it.memberId) }
-                if (involved.isNotEmpty()) {
+                if (involved.isNotEmpty() && !expense.isReimbursement) {
                     VSpace(6.dp)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         AvatarStack(involved, max = 5, size = 20.dp)
+                        HSpace(8.dp)
                         Text(
                             text = if (involved.size == detail.members.size) {
-                                "  everyone"
+                                "everyone"
                             } else {
-                                "  " + involved.joinToString(", ") { it.name.substringBefore(' ') }
+                                "${involved.size} people"
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 10.sp,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
@@ -661,6 +711,7 @@ private fun ExpenseRow(
  */
 private fun androidx.compose.foundation.lazy.LazyListScope.peopleTab(
     detail: GroupDetail,
+    summary: com.kanishk.splits.model.GroupSummary,
     myMemberId: String?,
     readOnly: Boolean,
     onPickIdentity: () -> Unit,
@@ -715,7 +766,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.peopleTab(
             )
         }
         items(detail.joinedMembers, key = { "joined-${it.id}" }) { member ->
-            PersonRow(member = member, joined = true, isMe = member.id == myMemberId)
+            PersonRow(
+                member = member,
+                isMe = member.id == myMemberId,
+                spentMinor = summary.spentBy(member.id),
+                currencyCode = detail.group.currencyCode,
+            )
         }
     }
 
@@ -729,13 +785,27 @@ private fun androidx.compose.foundation.lazy.LazyListScope.peopleTab(
             )
         }
         items(waiting, key = { "waiting-${it.id}" }) { member ->
-            PersonRow(member = member, joined = false, isMe = false)
+            PersonRow(
+                member = member,
+                isMe = false,
+                spentMinor = summary.spentBy(member.id),
+                currencyCode = detail.group.currencyCode,
+            )
         }
     }
 }
 
+/**
+ * The section header above already says whether this person has joined, so the line under
+ * the name is free to carry the thing you actually came to look up: their own spend.
+ */
 @Composable
-private fun PersonRow(member: Member, joined: Boolean, isMe: Boolean) {
+private fun PersonRow(
+    member: Member,
+    isMe: Boolean,
+    spentMinor: Long,
+    currencyCode: String,
+) {
     SplitsCard(Modifier.fillMaxWidth()) {
         Row(
             Modifier.padding(12.dp),
@@ -751,21 +821,12 @@ private fun PersonRow(member: Member, joined: Boolean, isMe: Boolean) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = if (joined) "on a device" else "name is free to claim",
+                    text = "spent ${formatMinor(spentMinor, currencyCode)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Icon(
-                imageVector = if (joined) Icons.Outlined.CheckCircle else Icons.Outlined.Schedule,
-                contentDescription = null,
-                tint = if (joined) {
-                    SplitsTheme.money.positive
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                modifier = Modifier.size(18.dp),
-            )
+
         }
     }
 }
@@ -805,23 +866,36 @@ private fun androidx.compose.foundation.lazy.LazyListScope.balancesTab(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    VSpace(2.dp)
+                    // Net alone never answers "but how much did *they* actually spend?".
+                    Text(
+                        text = "spent ${formatMinor(balance.spentMinor, currency)}" +
+                            " · paid ${formatMinor(balance.paidMinor, currency)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
                     Text(
                         text = when {
                             balance.netMinor > 0 -> "gets back"
                             balance.netMinor < 0 -> "owes"
                             else -> "settled up"
                         },
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 10.sp,
                     )
-                }
-                if (!balance.isSettled) {
-                    MoneyText(
-                        amountMinor = if (balance.netMinor < 0) -balance.netMinor else balance.netMinor,
-                        currencyCode = currency,
-                        color = balanceColor(balance.netMinor),
-                        fontSize = 17.sp,
-                    )
+                    if (!balance.isSettled) {
+                        MoneyText(
+                            amountMinor = if (balance.netMinor < 0) -balance.netMinor else balance.netMinor,
+                            currencyCode = currency,
+                            color = balanceColor(balance.netMinor),
+                            fontSize = 17.sp,
+                        )
+                    }
                 }
             }
         }
@@ -856,7 +930,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.balancesTab(
 
                     Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                         Text(
-                            "${from?.name ?: "?"} → ${to?.name ?: "?"}",
+                            "${from?.name ?: "?"} pays ${to?.name ?: "?"}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
@@ -865,8 +939,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.balancesTab(
                         MoneyText(
                             amountMinor = settlement.amountMinor,
                             currencyCode = currency,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 15.sp,
                         )
                     }
 

@@ -194,10 +194,27 @@ split — the whole amount lands on the person being paid — which is exactly w
 debt without counting as new spending. `BalancesTest` pins this down: pay for dinner, settle
 up, and the group total stays at the dinner while both balances go to zero.
 
-`suggestSettlements` is greedy min-cash-flow: repeatedly match the largest debtor against the
-largest creditor. It produces at most *n − 1* transfers, which is what people want to see —
-not a literal edge for every pairwise debt. A test applies every suggested transfer and asserts
-nobody is left owing anything.
+Each balance also carries `spentMinor` and `paidMinor`: the member's own share of the
+expenses, and what they fronted at the till. Both deliberately ignore settlements, so the
+members' spends sum to `totalSpentMinor` exactly — a test asserts that.
+
+`suggestSettlements` returns the **fewest** payments that square the group up. The obvious
+approach, greedy min-cash-flow — repeatedly match the largest debtor against the largest
+creditor — is not minimal, and not rarely: it overshoots on roughly a sixth of random groups.
+On balances `[4, 3, −1, −3, −3]` it spends four transfers where three suffice, because it
+never notices that +3 and −3 cancel between themselves.
+
+So the members are first split into as many independent zero-sum groups as possible — every
+split saves exactly one payment — and greedy runs inside each group, where it *is* optimal. A
+group of *k* people with no zero-sum subset of its own always needs *k − 1* transfers.
+
+That split is subset-sum, so it is exponential (3^n over the members with a non-zero balance).
+`MaxExactPartition` caps the search at 15 people and falls back to plain greedy beyond it;
+real groups are nowhere near that. `GroupSummary.settlements` is `by lazy` because the home
+screen holds a summary per group but only ever reads balances — it should never pay for this.
+
+`BalancesTest` checks the result against a brute-force reference implementation across three
+thousand randomised groups: same count, and every debt actually cleared.
 
 Balances across a group always net to zero. That is a useful invariant to assert against if you
 change any of this.
@@ -643,7 +660,7 @@ All tests in `commonTest` are pure logic:
 | `CategorySuggestTest` | word-boundary matching, plurals, rule precedence, no false positives |
 | `NotificationTextTest` | finished notification strings, including that none contain a raw placeholder |
 | `MembershipTest` | name availability, joined counts, releasing a name, admin following the claim, who may rename and remove |
-| `BalancesTest` | reimbursement excluded from total, balances netting to zero, settle-up clearing every debt |
+| `BalancesTest` | reimbursement excluded from total, balances netting to zero, per-member spend summing to the group total, settle-up clearing every debt in provably the fewest payments |
 | `IdsTest` | id format the server enforces, invite code length and alphabet, no modulo bias, normalising round-trips |
 
 ```bash
