@@ -29,6 +29,16 @@ The settle-up list is the true minimum number of transfers, not the greedy appro
 splitters ship — that one overshoots on about a sixth of groups because it misses debts that
 cancel between two people on their own.
 
+**Two people recording the same payment counts once.**
+Both of you can tap Record on the same "A pays B" line, on two phones, offline, at the same
+moment. It lands as one settlement, not two, because a suggested settlement's id is derived
+from the suggestion itself rather than minted at random — so the two saves are the same row.
+
+**The admin can free a name.**
+A phone that is lost, sold or wiped takes its name with it: nobody can claim it and its owner
+cannot get it back. Group settings lets the admin hand any name back to the pool, leaving that
+person's expenses and balance exactly as they are.
+
 **Categories, optional and extensible.**
 21 built-in categories, or none at all, or type your own. Custom categories keep a stable
 colour so the same label always looks the same.

@@ -244,6 +244,60 @@ else
   ok "admin_member_id cannot be reassigned after the group is created"
 fi
 
+# Freeing a name is the admin's to do and nobody else's. An ordinary member must not be able
+# to knock somebody else off their identity — least of all the admin's, which is the whole
+# hijack the CASE above exists to stop.
+FREED=$(( NOW + 120000 ))
+rpc splits_push "{\"p_device_id\":\"$ATTACKER_DEVICE\",\"p_payload\":{
+  \"members\":[{\"id\":\"$MID\",\"group_id\":\"$GID\",\"name\":\"Verifier\",\"color_index\":0,
+    \"claimed_by_device_id\":null,\"created_at\":$NOW,\"updated_at\":$FREED,
+    \"deleted\":false}]}}" >/dev/null
+
+still_held=$(rpc splits_pull "{\"p_group_ids\":[\"$GID\"],\"p_since\":0,\"p_device_id\":\"$ADMIN_DEVICE\"}")
+if printf '%s' "$still_held" | grep -q "$ADMIN_DEVICE"; then
+  ok "a non-admin cannot free somebody else's name"
+else
+  bad "an ordinary member released the admin's claim: $still_held"
+  say "        Check the admin branch of the claimed_by_device_id CASE in splits_push."
+fi
+
+# ------------------------------------------------------------- admin can free --
+#
+# The other half of that rule: a phone that is lost, sold or wiped holds its name forever
+# unless the admin can hand it back. This is the app's "Free the name" button.
+
+say ""
+say "Freeing a name (admin only)"
+
+MID2="verifymember2000000000000$SUFFIX"
+THIRD_DEVICE=$(hexid)
+JOINED=$(( NOW + 180000 ))
+
+rpc splits_push "{\"p_device_id\":\"$ATTACKER_DEVICE\",\"p_payload\":{
+  \"members\":[{\"id\":\"$MID2\",\"group_id\":\"$GID\",\"name\":\"Lost phone\",\"color_index\":1,
+    \"claimed_by_device_id\":\"$ATTACKER_DEVICE\",\"created_at\":$JOINED,\"updated_at\":$JOINED,
+    \"deleted\":false}]}}" >/dev/null
+
+RELEASED=$(( NOW + 240000 ))
+rpc splits_push "{\"p_device_id\":\"$ADMIN_DEVICE\",\"p_payload\":{
+  \"members\":[{\"id\":\"$MID2\",\"group_id\":\"$GID\",\"name\":\"Lost phone\",\"color_index\":1,
+    \"claimed_by_device_id\":null,\"created_at\":$JOINED,\"updated_at\":$RELEASED,
+    \"deleted\":false}]}}" >/dev/null
+
+RECLAIMED=$(( NOW + 300000 ))
+rpc splits_push "{\"p_device_id\":\"$THIRD_DEVICE\",\"p_payload\":{
+  \"members\":[{\"id\":\"$MID2\",\"group_id\":\"$GID\",\"name\":\"Lost phone\",\"color_index\":1,
+    \"claimed_by_device_id\":\"$THIRD_DEVICE\",\"created_at\":$JOINED,\"updated_at\":$RECLAIMED,
+    \"deleted\":false}]}}" >/dev/null
+
+reclaimed=$(rpc splits_pull "{\"p_group_ids\":[\"$GID\"],\"p_since\":0,\"p_device_id\":\"$THIRD_DEVICE\"}")
+if printf '%s' "$reclaimed" | grep -q "$THIRD_DEVICE"; then
+  ok "the admin freed a held name and a new device could claim it"
+else
+  bad "the name was never freed, so nobody could take it over: $reclaimed"
+  say "        splits_push must let splits_is_group_admin release any claim in the group."
+fi
+
 # ------------------------------------------------------------------- cleanup --
 
 say ""

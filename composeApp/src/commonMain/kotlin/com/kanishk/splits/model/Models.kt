@@ -105,6 +105,24 @@ data class GroupDetail(
     fun canRemove(deviceId: String?, memberId: String): Boolean =
         isAdmin(deviceId) && memberId != group.adminMemberId
 
+    /**
+     * Whether this device may hand somebody else's name back to the pool.
+     *
+     * A claim is normally released only by the device holding it, which is fine right up until
+     * that phone is lost, sold or wiped. Then the name is claimed forever: its owner cannot
+     * take it again on a new phone, and nobody else can either, so the group is stuck with a
+     * participant nobody can be. The admin typed the participant list, so they are the one who
+     * gets to unstick it.
+     *
+     * Only claimed names, and never your own — giving up your own name is its own action and
+     * says so. `splits_push` enforces the same admin rule server-side; this only decides
+     * whether the control appears.
+     */
+    fun canRelease(deviceId: String?, memberId: String): Boolean {
+        val target = member(memberId) ?: return false
+        return isAdmin(deviceId) && target.isClaimed && target.id != meIn(deviceId)?.id
+    }
+
     /** Participants somebody has actually claimed on a device. */
     val joinedMembers: List<Member> get() = members.filter { it.isClaimed }
 

@@ -27,6 +27,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import com.kanishk.splits.model.dayIndexOf
+import com.kanishk.splits.model.nowMillis
+import com.kanishk.splits.model.settlementId
 import com.kanishk.splits.data.SplitsRepository
 import com.kanishk.splits.data.createSqlDriver
 import com.kanishk.splits.data.requestNotificationPermission
@@ -170,6 +173,16 @@ private fun SplitsNavHost() {
                             presetFromMemberId = fromId,
                             presetToMemberId = toId,
                             presetAmountMinor = amountMinor,
+                            // Both people looking at this suggestion derive the same id, so
+                            // recording it twice writes one row rather than double-counting
+                            // the payment. See settlementId.
+                            presetSettlementId = settlementId(
+                                groupId = route.groupId,
+                                fromMemberId = fromId,
+                                toMemberId = toId,
+                                amountMinor = amountMinor,
+                                dayIndex = dayIndexOf(nowMillis()),
+                            ),
                         )
                     )
                 },

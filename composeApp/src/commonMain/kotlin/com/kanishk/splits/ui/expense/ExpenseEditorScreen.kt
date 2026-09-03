@@ -221,6 +221,15 @@ fun ExpenseEditorScreen(
             }
             else -> resolveCategory(categoryId)?.label ?: "Expense"
         }
+        // The suggestion's own id, but only while the prefilled values still stand. Change the
+        // amount or either person and this is a different payment from the one both phones
+        // were looking at, so it must not share the id with it.
+        val preferredId = route.presetSettlementId?.takeIf {
+            isReimbursement &&
+                payer == route.presetFromMemberId &&
+                paidTo == route.presetToMemberId &&
+                amountMinor == route.presetAmountMinor
+        }
         scope.launch {
             repository.saveExpense(
                 groupId = route.groupId,
@@ -233,6 +242,7 @@ fun ExpenseEditorScreen(
                 note = note,
                 occurredAt = occurredAt,
                 splits = computedSplits,
+                preferredId = preferredId,
             )
             onDone()
         }

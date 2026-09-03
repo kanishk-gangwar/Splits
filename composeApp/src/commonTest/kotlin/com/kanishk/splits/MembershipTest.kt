@@ -154,6 +154,36 @@ class MembershipTest {
     }
 
     @Test
+    fun `only the admin can free somebody else's name`() {
+        val asAdmin = detail(
+            member("aarav", claimedBy = MY_DEVICE),
+            member("bhavna", claimedBy = OTHER_DEVICE),
+        )
+        // The case it exists for: bhavna's phone is gone and her name is stuck.
+        assertTrue(asAdmin.canRelease(MY_DEVICE, "bhavna"))
+
+        val asMember = detail(
+            member("aarav", claimedBy = OTHER_DEVICE),
+            member("bhavna", claimedBy = MY_DEVICE),
+        )
+        assertFalse(asMember.canRelease(MY_DEVICE, "aarav"))
+        assertFalse(asMember.canRelease(null, "aarav"))
+    }
+
+    @Test
+    fun `there is nothing to free on an unclaimed name or on your own`() {
+        val group = detail(
+            member("aarav", claimedBy = MY_DEVICE),
+            member("bhavna", claimedBy = OTHER_DEVICE),
+            member("chetan"),
+        )
+        assertFalse(group.canRelease(MY_DEVICE, "chetan"), "nobody is holding it")
+        // Giving up your own name is its own action, and it says so on the button.
+        assertFalse(group.canRelease(MY_DEVICE, "aarav"))
+        assertFalse(group.canRelease(MY_DEVICE, "nobody"), "an id that is not in the group")
+    }
+
+    @Test
     fun `every name taken leaves nothing to claim`() {
         val group = detail(
             member("aarav", claimedBy = OTHER_DEVICE),

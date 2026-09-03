@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material.icons.outlined.PersonAddAlt
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.Unarchive
@@ -83,6 +84,7 @@ fun GroupSettingsScreen(
     var confirmDelete by remember { mutableStateOf(false) }
     var removeBlocked by remember { mutableStateOf<String?>(null) }
     var confirmRelease by remember { mutableStateOf(false) }
+    var freeing by remember { mutableStateOf<Member?>(null) }
 
     val current = detail
     if (current == null) {
@@ -256,7 +258,8 @@ fun GroupSettingsScreen(
                     if (!isAdmin) {
                         Text(
                             "You can rename yourself. Only the group admin can rename other " +
-                                "participants or remove them.",
+                                "participants, remove them, or free up a name whose phone is " +
+                                "gone.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 4.dp),
@@ -282,6 +285,7 @@ fun GroupSettingsScreen(
                         isAdminMember = member.id == group.adminMemberId,
                         readOnly = readOnly,
                         onRename = { renaming = member.id to member.name },
+                        onFree = { freeing = member },
                         onRemove = {
                             scope.launch {
                                 val removed = repository.removeMember(groupId, member.id)
@@ -303,6 +307,7 @@ fun GroupSettingsScreen(
                         isAdminMember = member.id == group.adminMemberId,
                         readOnly = readOnly,
                         onRename = { renaming = member.id to member.name },
+                        onFree = { freeing = member },
                         onRemove = {
                             scope.launch {
                                 val removed = repository.removeMember(groupId, member.id)
@@ -489,6 +494,30 @@ fun GroupSettingsScreen(
         )
     }
 
+    freeing?.let { member ->
+        AlertDialog(
+            onDismissRequest = { freeing = null },
+            title = { Text("Free \"${member.name}\"?") },
+            text = {
+                Text(
+                    "${member.name} goes back on the list for anyone with the invite to claim, " +
+                        "and the phone holding it now drops back to picking a name. Use this " +
+                        "when that phone is lost or wiped — expenses and balances are untouched."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch { repository.releaseMemberIdentity(member.id) }
+                    freeing = null
+                }) { Text("Free the name") }
+            },
+            dismissButton = {
+                TextButton(onClick = { freeing = null }) { Text("Cancel") }
+            },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        )
+    }
+
     removeBlocked?.let { blockedName ->
         AlertDialog(
             onDismissRequest = { removeBlocked = null },
@@ -581,6 +610,7 @@ private fun ParticipantRow(
     isAdminMember: Boolean,
     readOnly: Boolean,
     onRename: () -> Unit,
+    onFree: () -> Unit,
     onRemove: () -> Unit,
 ) {
     SplitsCard(Modifier.fillMaxWidth()) {
@@ -615,6 +645,16 @@ private fun ParticipantRow(
                     Icon(
                         Icons.Outlined.Edit,
                         contentDescription = "Rename ${member.name}",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            if (detail.canRelease(deviceId, member.id)) {
+                IconButton(onClick = onFree, enabled = !readOnly) {
+                    Icon(
+                        Icons.Outlined.LockOpen,
+                        contentDescription = "Free the name ${member.name}",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp),
                     )

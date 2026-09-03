@@ -244,6 +244,23 @@ class SplitsRepository(
         queries.releaseClaimsForDevice(nowMillis(), groupId, deviceId)
     }
 
+    /**
+     * The admin freeing somebody else's name, which is the only way a group gets unstuck when
+     * a phone is lost, sold, or wiped: without it that name is claimed forever, its owner can
+     * never rejoin under it, and nobody else can take it either.
+     *
+     * The claim is all that goes — the member row, their expenses and their balance are
+     * untouched, exactly as when someone gives up their own name. The device that held it
+     * finds out on its next pull and lands back on "pick who you are".
+     *
+     * Admin rights are checked twice on purpose: [GroupDetail.canRelease] decides whether the
+     * control is even offered, and `splits_push` re-checks server-side, because hiding a
+     * button stops nobody talking to the API directly.
+     */
+    suspend fun releaseMemberIdentity(memberId: String) = withContext(dispatcher) {
+        queries.releaseClaimOfMember(nowMillis(), memberId)
+    }
+
     /** A member can only be removed while they are not entangled in any expense. */
     suspend fun removeMember(groupId: String, memberId: String): Boolean = withContext(dispatcher) {
         val expenses = queries.selectExpensesOfGroup(groupId).executeAsList()
@@ -255,6 +272,16 @@ class SplitsRepository(
         true
     }
 
+    /**
+     * [preferredId] is the deterministic id of a suggested settlement (see `settlementId`):
+     * both people looking at the same suggestion derive it, so recording it on two phones
+     * writes one row instead of counting the payment twice.
+     *
+     * It is only taken when nothing is already stored under it. A row that is *already here*
+     * means the user can see the first payment and is deliberately recording a second one, so
+     * that gets an id of its own — the merge is only ever for the concurrent case, where the
+     * other device's row has not arrived yet.
+     */
     suspend fun saveExpense(
         groupId: String,
         expenseId: String?,
@@ -266,9 +293,12 @@ class SplitsRepository(
         note: String?,
         occurredAt: Long,
         splits: List<Split>,
+        preferredId: String? = null,
     ): String = withContext(dispatcher) {
         val now = nowMillis()
-        val id = expenseId ?: newId()
+        val unusedPreferredId = preferredId
+            ?.takeIf { queries.selectExpenseById(it).executeAsOneOrNull() == null }
+        val id = expenseId ?: unusedPreferredId ?: newId()
         val createdAt = expenseId
             ?.let { queries.selectExpenseById(it).executeAsOneOrNull()?.createdAt }
             ?: now

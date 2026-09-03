@@ -8,6 +8,7 @@ put together, and more importantly *why* the awkward bits are the way they are.
 - [Money](#money)
 - [Splitting](#splitting)
 - [Balances and settle-up](#balances-and-settle-up)
+  - [Recording the same settlement twice](#recording-the-same-settlement-twice)
 - [Data model](#data-model)
 - [Sync](#sync)
 - [Server security model](#server-security-model)
@@ -39,6 +40,7 @@ composeApp/src/
       Money.kt              minor-unit arithmetic and formatting
       SplitPlan.kt          turning form input into per-member shares
       Balances.kt           net positions and settle-up suggestions
+      SettlementId.kt       the id two devices derive for the same suggested payment
       Categories.kt         built-in + custom categories
       Dates.kt              day grouping and relative formatting
       GroupCard.kt          the home screen's row model
@@ -92,12 +94,21 @@ Consequences, all intentional:
   touching the member row or its expenses, so the name returns to the pool. That is the only
   way to move to a new phone, and it is what makes "taken" a temporary state rather than a
   dead end.
+- **The admin can give up somebody else's name.** `releaseMemberIdentity` is the same clear,
+  applied to any member row. It exists because "only the holder may release" has one failure
+  case it cannot recover from: the holding phone is lost, sold or wiped. Then the name is
+  claimed forever — its owner cannot retake it on a new device, nobody else can take it, and
+  the group is stuck with a participant nobody can be. `GroupDetail.canRelease` offers the
+  control to the admin only, for claimed names that are not their own (giving up your own name
+  is its own action and says so), and `splits_push` re-checks admin rights server-side. It
+  grants the admin no reach they did not already have — they can delete the entire group — and
+  discloses nothing, since `claimed_by_device_id` is still never returned by a pull.
 - **Claiming is exclusive per group.** `claimMember` releases any other name this device holds
   in that group first, so one device can never be two people in the same group.
 - **"Admin" is a member id, not a user.** `groupEntity.adminMemberId` points at a member row;
   you are admin if your device has claimed that row. This is what
   `splits_delete_group(p_group_id, p_device_id)` re-checks server-side.
-- **Renaming is yourself-or-admin; removing is admin-only.** `GroupDetail.canRename` allows the
+- **Renaming is yourself-or-admin; removing and freeing a name are admin-only.** `GroupDetail.canRename` allows the
   member this device has claimed, plus anyone at all if this device is the admin — they typed
   the participant list, so somebody has to be able to fix a name whose owner has not turned up
   to claim it yet. What it rules out is the middle case: an ordinary member retyping another
@@ -218,6 +229,35 @@ thousand randomised groups: same count, and every debt actually cleared.
 
 Balances across a group always net to zero. That is a useful invariant to assert against if you
 change any of this.
+
+### Recording the same settlement twice
+
+Two people look at the same "A pays B" line and both tap Record. With a random id each, that is
+two settlement rows for one payment: the group is out by the amount, and nothing downstream can
+tell the rows apart, because on the wire they are simply two different expenses. Offline makes
+it worse, not better — neither device sees the other's row until both have synced, so there is
+nothing to warn against at the time.
+
+So a settlement recorded from a *suggestion* does not get a random id. `model/SettlementId.kt`
+derives one from what both devices already agree on — group, payer, payee, amount, and the UTC
+day — and hashes it to the same 32-hex shape `newId()` produces. Both pushes land on the same
+primary key, the server upserts, and one row survives. No dedupe pass, no extra column, no
+server change; whoever saved last wins the title, which is last-write-wins as everywhere else.
+
+Three edges, each handled where it can actually be checked:
+
+- **The day has to be in the key.** The same debt recurring next week is a *new* payment, and
+  without a day component it would silently overwrite the old one.
+- **A second identical payment on the same day** would collide with the first. `saveExpense`
+  takes the derived id only when no row is stored under it — if the first payment is already in
+  the database the user can see it and is recording another on purpose, so that one gets a
+  random id. Only the concurrent case merges, which is the case worth merging.
+- **Editing the prefilled form makes it a different payment.** `ExpenseEditorScreen` drops the
+  derived id the moment the amount or either person differs from the preset, so a settlement
+  the user retyped never shares a row with the suggestion it started from.
+
+Settlements added by hand from the expense editor are unaffected: there is no suggestion for
+two devices to agree on, so they keep random ids.
 
 ---
 
@@ -389,9 +429,10 @@ Two things follow, and both are enforced in `splits_push` rather than trusted to
   an equality check against this device's own id. **Do not "tidy" that projection back into
   `to_jsonb(m)`.**
 - **A claim can only be taken for yourself, and only when nobody else holds it**; a claim can
-  only be released by the device holding it. Otherwise the device id being secret would not
-  matter: anyone with the invite could simply push a claim over the admin's name and then
-  delete. `admin_member_id` is likewise frozen after the group row is inserted — the app sets
+  only be released by the device holding it, or by the group's admin (see
+  [Identity](#identity-there-are-no-accounts) for why the admin needs that). Otherwise the
+  device id being secret would not matter: anyone with the invite could simply push a claim
+  over the admin's name and then delete. `admin_member_id` is likewise frozen after the group row is inserted — the app sets
   it once at creation and has no transfer flow, so there is nothing legitimate to allow.
 
 Flagging a group `deleted = true` through `splits_push` is gated on admin rights for the same
@@ -681,6 +722,10 @@ non-admin device id being refused is not by itself evidence the model holds — 
 passed that check while the bypass was wide open, because the attacker never needed to guess a
 device id; it was handed to them. Test the disclosure, not just the comparison.
 
+Freeing a name has checks on both sides of the same rule: an ordinary member pushing a release
+over the admin's claim must achieve nothing, and the admin releasing a held name must leave it
+claimable by a fresh device.
+
 **What is not covered:** there are no UI tests and no instrumented tests. Screens, navigation,
 and the client half of sync are verified only by compiling and by running the app manually. If
 you are adding logic worth trusting, put it in `model/` where it can be tested, and keep the
@@ -691,6 +736,10 @@ composable a shell over it — that is exactly how `SplitPlan` came to exist.
 ## Known gaps
 
 - **No UI or instrumentation tests.** The riskiest untested surface is the sync client.
+- **Two devices can still double-record a settlement across UTC midnight**, or by editing the
+  prefilled amount to the same value each. Both fall outside the derived id (see
+  [Recording the same settlement twice](#recording-the-same-settlement-twice)); the common case
+  — same suggestion, same day — is covered.
 - **Installs older than the security fix lose their identity until they update.** The schema no
   longer hands a device anybody's `claimed_by_device_id` but its own, and an older build does
   not send `p_device_id` to identify itself — so it sees every name as held by someone else and

@@ -417,8 +417,9 @@ $$;
 -- than trusted to the client:
 --
 --   * claimed_by_device_id — a device may claim only an unheld name, and only for itself, and
---     may release only a name it actually holds. Without this, anyone with the invite could
---     take over the admin's identity and then delete the group.
+--     may release only a name it actually holds, or, if it is the group's admin, any name at
+--     all. Without this, anyone with the invite could take over the admin's identity and then
+--     delete the group.
 --   * admin_member_id — frozen after the group row is first inserted. The app sets it once at
 --     creation and has no transfer flow, so there is nothing legitimate to allow here.
 drop function if exists public.splits_push(jsonb);
@@ -500,6 +501,16 @@ begin
             when excluded.claimed_by_device_id is null
                  and v_device is not null
                  and public.splits_members.claimed_by_device_id = v_device
+                then null
+            -- ...or the group's admin, for anyone. A claim held by a phone that has been lost,
+            -- sold or wiped can otherwise never be released: its owner cannot retake the name
+            -- on a new device and nobody else can take it either, so the group is stuck with a
+            -- participant nobody can be. The admin typed the participant list, so they are who
+            -- gets to free it. This grants no reach the admin does not already have — they can
+            -- delete the whole group — and it discloses nothing: the column is still never
+            -- returned by splits_pull.
+            when excluded.claimed_by_device_id is null
+                 and public.splits_is_group_admin(public.splits_members.group_id, v_device)
                 then null
             -- Claiming: for yourself only, and only a name nobody else is holding.
             when v_device is not null
