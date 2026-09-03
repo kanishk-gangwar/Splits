@@ -15,6 +15,17 @@ expect fun copyToClipboard(text: String)
 expect fun deviceLabel(): String
 
 /**
+ * Hands [url] to the browser. The one caller that matters is the update button, which points
+ * at the APK on GitHub Releases: the download, the "install unknown apps" prompt and the
+ * installer are all the platform's job, and an app that tried to own that flow would need
+ * permissions it has no other use for.
+ */
+expect fun openUrl(url: String)
+
+/** The installed version, e.g. "1.5.0". Shown in settings and compared against the latest release. */
+expect fun appVersionName(): String
+
+/**
  * [count] bytes from the platform's cryptographic RNG.
  *
  * Not a convenience over `kotlin.random.Random`: group ids, device ids and invite codes are

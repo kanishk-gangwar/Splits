@@ -43,6 +43,12 @@ person's expenses and balance exactly as they are.
 21 built-in categories, or none at all, or type your own. Custom categories keep a stable
 colour so the same label always looks the same.
 
+**It tells you when there is a new version.**
+Sideloaded apps have nothing to notice a release for them. Settings shows the installed
+version, checks GitHub for the newest one, and hands you the download — the same link that
+always serves the latest build. The browser downloads it and Android installs it; your groups
+and expenses are kept.
+
 **Admin deletes, everyone else hides.**
 Only the member who created the group can delete it for everyone. Anyone else can *hide* it,
 which removes it from their own device only — reversible from Settings. Both are separate

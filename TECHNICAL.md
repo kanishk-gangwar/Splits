@@ -17,6 +17,7 @@ put together, and more importantly *why* the awkward bits are the way they are.
 - [Notifications](#notifications)
 - [Category suggestions](#category-suggestions)
 - [Invites and distribution](#invites-and-distribution)
+- [Updating the app](#updating-the-app)
 - [Who has joined](#who-has-joined)
 - [UI conventions](#ui-conventions)
 - [Build setup and its sharp edges](#build-setup-and-its-sharp-edges)
@@ -538,6 +539,32 @@ That URL is `releases/latest/download/Splits.apk`, which resolves to the newest 
 because **every release attaches its APK under exactly that filename**. Rename the asset and the
 link breaks silently — the release title carries the version instead. Deployment details are in
 [SETUP.md](SETUP.md).
+
+## Updating the app
+
+There is no store, so nothing tells anyone a new build exists. Settings ends with an **App
+version** card that does: it shows the installed version, asks GitHub for the newest release,
+and offers a button that opens `APP_DOWNLOAD_URL` — the same `releases/latest/download/Splits.apk`
+permalink the invite message carries. The browser does the download and Android does the
+install prompt; the app asks for no install permission of its own and never fetches an APK
+itself, which is a capability it has no other use for and no way to use safely.
+
+Three rules keep the card honest:
+
+- **The check is advisory; the button never depends on it.** A failed check says so and still
+  offers the download. "We could not reach GitHub" must not be dressed up as "you are up to
+  date", and it must not take the download away either.
+- **Nothing from the response is trusted with anything.** `ReleaseCheck` reads one field,
+  `tag_name`, and it decides one thing: whether to say an update is out. The URL that is opened
+  is the constant in `DeepLinks.kt`, never a link out of the reply. The call is unauthenticated
+  — the endpoint is public, and a token shipped inside an APK is a token given away.
+- **The comparison is numeric, in `model/AppVersion.kt`.** As text, `1.10.0` sorts below
+  `1.5.0`, which would leave everyone on 1.5.0 believing they were current forever. Anything
+  that is not a plain dotted number — a pre-release suffix, an error page — parses to null and
+  the card falls back to the plain download link rather than guessing.
+
+On iOS the button opens the release page. The iOS build is not distributed at all (see
+SETUP.md), so there is nothing better to point it at, and a dead button would be worse.
 
 ## Who has joined
 

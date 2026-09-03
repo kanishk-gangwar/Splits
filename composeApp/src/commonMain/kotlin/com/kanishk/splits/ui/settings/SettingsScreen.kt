@@ -12,11 +12,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,8 +35,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kanishk.splits.APP_DOWNLOAD_URL
 import com.kanishk.splits.LocalRepository
+import com.kanishk.splits.data.appVersionName
 import com.kanishk.splits.data.deviceLabel
+import com.kanishk.splits.data.openUrl
+import com.kanishk.splits.data.remote.ReleaseCheck
+import com.kanishk.splits.model.isUpdateAvailable
 import com.kanishk.splits.ui.components.SectionLabel
 import com.kanishk.splits.ui.components.SegmentedControl
 import com.kanishk.splits.ui.components.SplitsCard
@@ -227,6 +235,107 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                    }
+                }
+            }
+
+            item { UpdateSection() }
+        }
+    }
+}
+
+/** What the release check has told us so far. */
+private enum class UpdateStatus { Checking, UpToDate, Available, Unknown }
+
+/**
+ * The app updates itself the only way a sideloaded app can: by sending you to the APK on
+ * GitHub Releases. There is no Play Store to notice a new version and nothing in the app is
+ * allowed to install one, so without this the only way to learn about a release was to be told
+ * about it.
+ *
+ * The check is advisory and the button never depends on it. If GitHub cannot be reached the
+ * screen says so and still offers the download — "we could not check" must not be dressed up
+ * as "you are up to date", and it must not take the download away either.
+ */
+@Composable
+private fun UpdateSection() {
+    val installed = remember { appVersionName() }
+    var status by remember { mutableStateOf(UpdateStatus.Checking) }
+    var latest by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        val tag = ReleaseCheck().latestTag().getOrNull()
+        latest = tag?.removePrefix("v")
+        status = when {
+            tag == null -> UpdateStatus.Unknown
+            isUpdateAvailable(tag, installed) -> UpdateStatus.Available
+            else -> UpdateStatus.UpToDate
+        }
+    }
+
+    Column {
+        SectionLabel("App version")
+        VSpace(10.dp)
+        SplitsCard(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (installed.isBlank()) "Splits" else "Splits $installed",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    if (status == UpdateStatus.Checking) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                VSpace(4.dp)
+                Text(
+                    when (status) {
+                        UpdateStatus.Checking -> "Checking for a newer build…"
+                        UpdateStatus.UpToDate -> "You have the latest release."
+                        UpdateStatus.Available -> "Version ${latest.orEmpty()} is out."
+                        UpdateStatus.Unknown ->
+                            "Could not reach GitHub to check. The link below always serves the newest build."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                if (status != UpdateStatus.UpToDate) {
+                    VSpace(12.dp)
+                    Button(
+                        onClick = { openUrl(APP_DOWNLOAD_URL) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(
+                            Icons.Outlined.FileDownload,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Text(
+                            if (status == UpdateStatus.Available) "Update" else "Download the latest",
+                            Modifier.padding(start = 8.dp),
+                        )
+                    }
+                    VSpace(8.dp)
+                    // Android asks before it lets any app install another, and it asks about
+                    // the browser, not about Splits — saying so here saves the prompt reading
+                    // as something going wrong.
+                    Text(
+                        "Opens the APK in your browser. Android will ask for permission to " +
+                            "install it — your groups and expenses are kept.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    VSpace(10.dp)
+                    TextButton(onClick = { openUrl(APP_DOWNLOAD_URL) }) {
+                        Text("Download it again")
                     }
                 }
             }

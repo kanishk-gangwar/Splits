@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
@@ -42,6 +43,21 @@ actual fun copyToClipboard(text: String) {
 }
 
 actual fun deviceLabel(): String = "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}"
+
+actual fun openUrl(url: String) {
+    val view = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    // A device with no browser at all is a stranger thing than a crash on the settings screen,
+    // but it is the caller's screen that would die, so the miss is swallowed.
+    runCatching { appContext.startActivity(view) }
+}
+
+@Suppress("DEPRECATION")
+actual fun appVersionName(): String =
+    runCatching {
+        appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
+    }.getOrNull() ?: ""
 
 /**
  * One instance, reused. `SecureRandom()` seeds itself from the OS on construction, so minting

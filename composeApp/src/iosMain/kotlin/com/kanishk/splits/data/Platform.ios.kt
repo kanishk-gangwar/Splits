@@ -7,6 +7,8 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.usePinned
+import platform.Foundation.NSBundle
+import platform.Foundation.NSURL
 import platform.Security.SecRandomCopyBytes
 import platform.Security.kSecRandomDefault
 import platform.UIKit.UIActivityViewController
@@ -48,6 +50,19 @@ actual fun copyToClipboard(text: String) {
 }
 
 actual fun deviceLabel(): String = UIDevice.currentDevice.name
+
+/**
+ * The update button points at an APK, which iOS cannot install — there is no sideloading path
+ * comparable to one, and the iOS build is not distributed at all (SETUP.md). Opening the link
+ * still lands on the release page, which is the honest thing to show rather than a dead button.
+ */
+actual fun openUrl(url: String) {
+    val target = NSURL.URLWithString(url) ?: return
+    UIApplication.sharedApplication.openURL(target)
+}
+
+actual fun appVersionName(): String =
+    NSBundle.mainBundle.objectForInfoDictionaryKey("CFBundleShortVersionString") as? String ?: ""
 
 /**
  * `SecRandomCopyBytes` is the platform CSPRNG. It can fail (the status is not decorative), and
