@@ -22,6 +22,7 @@ fun monthInsights(
     members: List<Member>,
     expenses: List<Expense>,
     monthYear: MonthYear,
+    myMemberId: String? = null,
 ): MonthInsights {
     val inMonth = expenses.inMonth(monthYear)
     val summary = summarise(members, inMonth)
@@ -36,7 +37,10 @@ fun monthInsights(
                 expenses = inMonth.filter { !it.isReimbursement && it.involves(member.id) },
             )
         }.sortedWith(
-            compareByDescending<MemberMonthInsight> { it.spentMinor }
+            // "What did I spend?" is the reason this screen exists, so you come first
+            // even when somebody else spent more. Everyone else is biggest-spend first.
+            compareByDescending<MemberMonthInsight> { it.member.id == myMemberId }
+                .thenByDescending { it.spentMinor }
                 .thenBy { it.member.name.lowercase() }
         ),
     )

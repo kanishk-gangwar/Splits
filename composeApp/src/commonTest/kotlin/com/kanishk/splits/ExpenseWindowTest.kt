@@ -150,6 +150,32 @@ class ExpenseWindowTest {
     }
 
     @Test
+    fun `the device owner is listed first even when someone else spent more`() {
+        val insights = monthInsights(
+            members = listOf(member("aarav"), member("bhavna")),
+            expenses = listOf(
+                expense(
+                    "taxi",
+                    LocalDate(2026, 9, 6),
+                    amount = 1_000,
+                    paidBy = "aarav",
+                    sharedWith = listOf("aarav"),
+                ),
+                expense(
+                    "rent",
+                    LocalDate(2026, 9, 6),
+                    amount = 9_000,
+                    paidBy = "bhavna",
+                    sharedWith = listOf("bhavna"),
+                ),
+            ),
+            monthYear = MonthYear(2026, Month.SEPTEMBER),
+            myMemberId = "aarav",
+        )
+        assertEquals(listOf("aarav", "bhavna"), insights.members.map { it.member.id })
+    }
+
+    @Test
     fun `a month with nothing in it still lists every member at zero`() {
         val insights = monthInsights(
             members = listOf(member("a"), member("b")),
