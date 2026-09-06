@@ -9,6 +9,22 @@ import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
+/** Year plus calendar month. Used for expense-list paging and monthly insights. */
+data class MonthYear(val year: Int, val month: Month) : Comparable<MonthYear> {
+    override fun compareTo(other: MonthYear): Int =
+        compareValuesBy(this, other, { it.year }, { it.month.ordinal })
+
+    fun plusMonths(delta: Int): MonthYear {
+        val index = year * 12 + month.ordinal + delta
+        return MonthYear(index.floorDiv(12), Month.entries[index.mod(12)])
+    }
+
+    fun minusMonths(delta: Int): MonthYear = plusMonths(-delta)
+}
+
+/** How many calendar months the expenses list reveals at a time. */
+const val ExpensePageMonths = 3
+
 @OptIn(ExperimentalTime::class)
 fun nowMillis(): Long = Clock.System.now().toEpochMilliseconds()
 
@@ -31,7 +47,44 @@ private val MONTHS = listOf(
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
 
+private val MONTHS_FULL = listOf(
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)
+
 private fun monthName(month: Month): String = MONTHS[month.ordinal]
+
+fun monthYearOf(epochMillis: Long): MonthYear {
+    val date = localDateOf(epochMillis)
+    return MonthYear(date.year, date.month)
+}
+
+fun todayMonthYear(): MonthYear = monthYearOf(nowMillis())
+
+fun startOfMonthMillis(monthYear: MonthYear): Long =
+    startOfDayMillis(LocalDate(monthYear.year, monthYear.month, 1))
+
+/**
+ * Oldest timestamp still in view after [pagesLoaded] windows of [ExpensePageMonths].
+ *
+ * Page 1 on a day in September is July 1st of that year — the current month and the two
+ * before it. Each extra page walks another three calendar months into the past.
+ */
+fun expensePageCutoffMillis(
+    nowMillis: Long,
+    pagesLoaded: Int,
+    monthsPerPage: Int = ExpensePageMonths,
+): Long {
+    val pages = pagesLoaded.coerceAtLeast(1)
+    val oldest = monthYearOf(nowMillis).minusMonths(pages * monthsPerPage - 1)
+    return startOfMonthMillis(oldest)
+}
+
+/** "September 2026" — the insights header and month picker. */
+fun formatMonthYear(monthYear: MonthYear): String =
+    "${MONTHS_FULL[monthYear.month.ordinal]} ${monthYear.year}"
+
+fun abbreviatedMonth(month: Month): String = monthName(month)
 
 /** Section headers on the expense list: "Today", "Yesterday", "12 Aug", "12 Aug 2024". */
 fun formatDayHeader(epochMillis: Long, now: Long = nowMillis()): String {

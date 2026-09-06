@@ -730,6 +730,7 @@ All tests in `commonTest` are pure logic:
 | `MoneyTest` | formatting, parsing, even and weighted splits reconciling across many shapes |
 | `SplitPlanTest` | pinned-versus-automatic rows, percent handling, restating pins across a mode switch, settlement shape |
 | `ExpenseFilterTest` | participant filtering matches both payers and share-holders |
+| `ExpenseWindowTest` | three-month expense paging cutoffs, month arithmetic, monthly insights excluding settlements |
 | `CategorySuggestTest` | word-boundary matching, plurals, rule precedence, no false positives |
 | `NotificationTextTest` | finished notification strings, including that none contain a raw placeholder |
 | `MembershipTest` | name availability, joined counts, releasing a name, admin following the claim, who may rename and remove |

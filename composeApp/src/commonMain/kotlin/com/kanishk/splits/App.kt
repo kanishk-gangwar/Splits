@@ -38,11 +38,13 @@ import com.kanishk.splits.db.SplitsDatabase
 import com.kanishk.splits.ui.CreateGroupRoute
 import com.kanishk.splits.ui.ExpenseEditorRoute
 import com.kanishk.splits.ui.GroupRoute
+import com.kanishk.splits.ui.GroupInsightsRoute
 import com.kanishk.splits.ui.GroupSettingsRoute
 import com.kanishk.splits.ui.GroupsRoute
 import com.kanishk.splits.ui.JoinRoute
 import com.kanishk.splits.ui.SettingsRoute
 import com.kanishk.splits.ui.expense.ExpenseEditorScreen
+import com.kanishk.splits.ui.group.GroupInsightsScreen
 import com.kanishk.splits.ui.group.GroupScreen
 import com.kanishk.splits.ui.group.GroupSettingsScreen
 import com.kanishk.splits.ui.groups.CreateGroupScreen
@@ -189,6 +191,9 @@ private fun SplitsNavHost() {
                 onOpenGroupSettings = {
                     navController.navigate(GroupSettingsRoute(route.groupId))
                 },
+                onOpenInsights = {
+                    navController.navigate(GroupInsightsRoute(route.groupId))
+                },
                 onGroupGone = {
                     navController.popBackStack(GroupsRoute, inclusive = false)
                 },
@@ -203,6 +208,14 @@ private fun SplitsNavHost() {
                 onLeftGroupList = {
                     navController.popBackStack(GroupsRoute, inclusive = false)
                 },
+            )
+        }
+
+        composable<GroupInsightsRoute> { entry ->
+            val route = entry.toRoute<GroupInsightsRoute>()
+            GroupInsightsScreen(
+                groupId = route.groupId,
+                onBack = { navController.popBackStack() },
             )
         }
 

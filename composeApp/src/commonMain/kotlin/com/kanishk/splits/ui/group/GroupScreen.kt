@@ -14,15 +14,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -34,10 +40,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,9 +60,13 @@ import com.kanishk.splits.model.Member
 import com.kanishk.splits.model.MemberBalance
 import com.kanishk.splits.model.ReimbursementCategory
 import com.kanishk.splits.model.dayKey
+import com.kanishk.splits.model.expensePageCutoffMillis
 import com.kanishk.splits.model.formatDayHeader
 import com.kanishk.splits.model.formatMinor
+import com.kanishk.splits.model.hasOccurredBefore
 import com.kanishk.splits.model.involving
+import com.kanishk.splits.model.nowMillis
+import com.kanishk.splits.model.occurredOnOrAfter
 import com.kanishk.splits.model.resolveCategory
 import com.kanishk.splits.model.summarise
 import com.kanishk.splits.ui.components.Avatar
@@ -72,6 +84,8 @@ import com.kanishk.splits.ui.components.VSpace
 import com.kanishk.splits.ui.components.balanceColor
 import com.kanishk.splits.ui.components.balanceContainerColor
 import com.kanishk.splits.ui.theme.categoryTint
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 @Composable
@@ -82,6 +96,7 @@ fun GroupScreen(
     onEditExpense: (String) -> Unit,
     onSettleUp: (String, String, Long) -> Unit,
     onOpenGroupSettings: () -> Unit,
+    onOpenInsights: () -> Unit,
     onGroupGone: () -> Unit,
 ) {
     val repository = LocalRepository.current
@@ -91,7 +106,12 @@ fun GroupScreen(
     var tab by remember { mutableStateOf(0) }
     var showInvite by remember { mutableStateOf(false) }
     var showIdentityPicker by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
     var filterMemberId by remember(groupId) { mutableStateOf<String?>(null) }
+    var pagesLoaded by remember(groupId) { mutableIntStateOf(1) }
+    var loadingMore by remember(groupId) { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val now = remember(groupId) { nowMillis() }
 
     val current = detail
 
@@ -123,6 +143,32 @@ fun GroupScreen(
     // point into editing is covered.
     val readOnly = group.archived
 
+    val cutoff = remember(now, pagesLoaded) { expensePageCutoffMillis(now, pagesLoaded) }
+    val hasOlder = remember(current.expenses, filterMemberId, cutoff) {
+        current.expenses.involving(filterMemberId).hasOccurredBefore(cutoff)
+    }
+
+    // Reveal the next three months when the last painted row is on screen. A short delay
+    // keeps the footer spinner visible — the rows are already on disk, so without it the
+    // next window would appear as if nothing happened.
+    LaunchedEffect(groupId, listState) {
+        snapshotFlow {
+            if (tab != 0 || loadingMore || !hasOlder) return@snapshotFlow false
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index ?: return@snapshotFlow false
+            info.totalItemsCount > 0 && last >= info.totalItemsCount - 1
+        }
+            .distinctUntilChanged()
+            .collect { shouldLoad ->
+                if (shouldLoad) {
+                    loadingMore = true
+                    delay(400)
+                    pagesLoaded += 1
+                    loadingMore = false
+                }
+            }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -137,12 +183,39 @@ fun GroupScreen(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    IconButton(onClick = onOpenGroupSettings) {
-                        Icon(
-                            Icons.Outlined.MoreHoriz,
-                            contentDescription = "Group settings",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    Box {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(
+                                Icons.Outlined.MoreHoriz,
+                                contentDescription = "More",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Insights") },
+                                onClick = {
+                                    showMenu = false
+                                    onOpenInsights()
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.Insights, contentDescription = null)
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Group settings") },
+                                onClick = {
+                                    showMenu = false
+                                    onOpenGroupSettings()
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.Settings, contentDescription = null)
+                                },
+                            )
+                        }
                     }
                 },
             )
@@ -162,6 +235,7 @@ fun GroupScreen(
     ) { padding ->
         SyncRefreshBox(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 110.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -221,6 +295,9 @@ fun GroupScreen(
                     detail = current,
                     myMemberId = me?.id,
                     filterMemberId = filterMemberId,
+                    cutoffMillis = cutoff,
+                    loadingMore = loadingMore,
+                    hasOlder = hasOlder,
                     readOnly = readOnly,
                     onEditExpense = onEditExpense,
                 )
@@ -518,6 +595,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.expensesTab(
     detail: GroupDetail,
     myMemberId: String?,
     filterMemberId: String?,
+    cutoffMillis: Long,
+    loadingMore: Boolean,
+    hasOlder: Boolean,
     readOnly: Boolean,
     onEditExpense: (String) -> Unit,
 ) {
@@ -537,15 +617,21 @@ private fun androidx.compose.foundation.lazy.LazyListScope.expensesTab(
     }
 
     // "Involved" means they either paid for it or owe a share of it — see Expense.involves.
-    val visible = detail.expenses.involving(filterMemberId)
+    // The list itself only paints three calendar months at a time; older rows stay off the
+    // composition until the user scrolls into the footer loader.
+    val visible = detail.expenses.involving(filterMemberId).occurredOnOrAfter(cutoffMillis)
 
     if (visible.isEmpty()) {
-        item {
-            EmptyState(
-                glyph = "🔍",
-                title = "Nothing here for ${detail.member(filterMemberId)?.name ?: "them"}",
-                subtitle = "They haven't paid for anything or owed a share in this group yet.",
-            )
+        if (hasOlder || loadingMore) {
+            item(key = "load-more") { ExpensePageLoader() }
+        } else {
+            item {
+                EmptyState(
+                    glyph = "🔍",
+                    title = "Nothing here for ${detail.member(filterMemberId)?.name ?: "them"}",
+                    subtitle = "They haven't paid for anything or owed a share in this group yet.",
+                )
+            }
         }
         return
     }
@@ -571,6 +657,30 @@ private fun androidx.compose.foundation.lazy.LazyListScope.expensesTab(
                 onClick = if (readOnly) null else ({ onEditExpense(expense.id) }),
             )
         }
+    }
+
+    if (loadingMore || hasOlder) {
+        item(key = "load-more") {
+            if (loadingMore) {
+                ExpensePageLoader()
+            } else {
+                Box(Modifier.fillMaxWidth().padding(8.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExpensePageLoader() {
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(22.dp),
+            strokeWidth = 2.dp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

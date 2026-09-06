@@ -14,6 +14,9 @@ data class GroupRoute(val groupId: String)
 @Serializable
 data class GroupSettingsRoute(val groupId: String)
 
+@Serializable
+data class GroupInsightsRoute(val groupId: String)
+
 /**
  * One editor serves new expenses, edits, and settle-up. The settle-up entry points prefill
  * [presetKind], the two members, and the amount, so the user only has to confirm.

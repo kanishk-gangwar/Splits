@@ -152,3 +152,13 @@ fun Expense.involves(memberId: String): Boolean =
 /** Filters to one member's involvement. A null id means "everyone", i.e. no filtering. */
 fun List<Expense>.involving(memberId: String?): List<Expense> =
     if (memberId == null) this else filter { it.involves(memberId) }
+
+/** Expenses on or after [cutoffMillis], keeping the original newest-first order. */
+fun List<Expense>.occurredOnOrAfter(cutoffMillis: Long): List<Expense> =
+    filter { it.occurredAt >= cutoffMillis }
+
+fun List<Expense>.hasOccurredBefore(cutoffMillis: Long): Boolean =
+    any { it.occurredAt < cutoffMillis }
+
+fun List<Expense>.inMonth(monthYear: MonthYear): List<Expense> =
+    filter { monthYearOf(it.occurredAt) == monthYear }
