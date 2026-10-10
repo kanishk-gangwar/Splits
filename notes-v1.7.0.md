@@ -1,9 +1,8 @@
 ## Your entries, your name, your way of settling up
 
 **Only you can change what you added.** An expense or settlement can now be edited or deleted
-only by the person who added it, or by the group admin. Everyone else can still open it and
-see the full details — who paid, how it was split, the note — just without Save or Delete.
-Entries from before this version count as the payer's.
+only by the person who added it, or by the group admin. Everyone else sees it as a plain row,
+and opening it says who added it. Entries from before this version count as the payer's.
 
 **Pick a name before you write.** Having the invite link lets you see a group. Adding expenses,
 recording settlements or renaming the group now needs you to pick which participant you are
