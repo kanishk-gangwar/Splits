@@ -19,9 +19,31 @@ val supabaseProperties = Properties().apply {
     if (file.exists()) file.inputStream().use { load(it) }
 }
 
+val supabaseUrl: String = supabaseProperties.getProperty("supabase.url", "")
+val supabaseAnonKey: String = supabaseProperties.getProperty("supabase.anonKey", "")
+
+// A release without a server is an offline-only app that cannot join a group, sync, or move a
+// device's names across — and nothing about it looks wrong until users install it. 1.7.0
+// shipped exactly like that from a machine whose local.properties had no Supabase lines. Debug
+// builds may still run offline; a release refuses to build at all.
+gradle.taskGraph.whenReady {
+    val releasing = allTasks.any { task ->
+        task.project == project &&
+            (task.name.startsWith("assemble") || task.name.startsWith("bundle")) &&
+            task.name.endsWith("Release")
+    }
+    if (releasing && (supabaseUrl.isBlank() || supabaseAnonKey.isBlank())) {
+        throw GradleException(
+            "Release build without Supabase config: add supabase.url and supabase.anonKey to " +
+                "local.properties (Supabase → Project Settings → API). A release without them " +
+                "is offline-only and cannot sync or join groups."
+        )
+    }
+}
+
 val generateSupabaseConfig by tasks.registering {
-    val url = supabaseProperties.getProperty("supabase.url", "")
-    val anonKey = supabaseProperties.getProperty("supabase.anonKey", "")
+    val url = supabaseUrl
+    val anonKey = supabaseAnonKey
     val outputDir = layout.buildDirectory.dir("generated/supabase")
 
     // Declared as inputs so editing local.properties actually re-runs this task.

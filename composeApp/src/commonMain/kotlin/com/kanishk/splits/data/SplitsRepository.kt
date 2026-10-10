@@ -40,6 +40,9 @@ private const val PREF_LAST_PULL = "last_pulled_at"
 private const val PREF_NOTIFICATIONS = "notifications_enabled"
 private const val PREF_LAST_PURGE = "last_purge_at"
 
+/** Set once the post-1.7.0 full resync has run. Bump the suffix to force another one. */
+private const val PREF_FULL_RESYNC_DONE = "full_resync_done_1_7_1"
+
 class SplitsRepository(
     private val database: SplitsDatabase,
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
@@ -442,11 +445,32 @@ class SplitsRepository(
         queries.selectAllGroupIds().executeAsList()
     }
 
-    /** Everything edited on this device since the last successful push. */
+    suspend fun needsFullResync(): Boolean = withContext(dispatcher) {
+        queries.selectPref(PREF_FULL_RESYNC_DONE).executeAsOneOrNull() == null
+    }
+
+    suspend fun markFullResyncDone() = withContext(dispatcher) {
+        queries.upsertPref(PREF_FULL_RESYNC_DONE, nowMillis().toString())
+    }
+
+    /**
+     * Everything edited on this device since the last successful push.
+     *
+     * Expenses in a group where this device holds no name are held back. The server drops
+     * those (writing needs a name), and once a row is marked pushed it is never sent again —
+     * the next pull would not find it on the server and reconcile it away. So it stays dirty
+     * on the device until the user picks a name, and goes up with the first push after that.
+     */
     suspend fun collectDirty(): PushPayload = withContext(dispatcher) {
         val groups = queries.selectDirtyGroups().executeAsList()
         val members = queries.selectDirtyMembers().executeAsList()
-        val expenses = queries.selectDirtyExpenses().executeAsList()
+        val joinedGroups = HashMap<String, Boolean>()
+        val expenses = queries.selectDirtyExpenses().executeAsList().filter { row ->
+            joinedGroups.getOrPut(row.groupId) {
+                queries.selectMembersOfGroup(row.groupId).executeAsList()
+                    .any { it.claimedByDeviceId == deviceId }
+            }
+        }
 
         PushPayload(
             groups = groups.map { row ->

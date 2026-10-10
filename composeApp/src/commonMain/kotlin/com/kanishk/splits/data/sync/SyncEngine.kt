@@ -89,12 +89,6 @@ class SyncEngine(
     private var nextRotationAttemptAt = 0L
 
     init {
-        // Nothing to coordinate with when there is no server: an install that minted a random
-        // id can switch to its stable one on the spot.
-        if (!api.isConfigured) {
-            scope.launch { rotateDeviceIfNeeded() }
-        }
-
         // Watch for unsent work and upload it on its own. Without this a saved expense sat on
         // the device until the user happened to pull down to refresh, which is not something
         // anyone should have to know to do.
@@ -126,6 +120,10 @@ class SyncEngine(
             // minted before ids became stable moves to the stable one first, so the push and
             // pull below already speak as the id the server will know it by from now on.
             rotateDeviceIfNeeded()
+
+            // Once per install of this version, read everything back from the server *before*
+            // pushing anything. See [resyncIfNeeded].
+            resyncIfNeeded()
 
             val pending = repository.collectDirty()
             if (!pending.isEmpty) {
@@ -188,10 +186,10 @@ class SyncEngine(
     private suspend fun rotateDeviceIfNeeded() {
         val (old, new) = repository.pendingDeviceRotation ?: return
 
-        if (!api.isConfigured) {
-            repository.completeDeviceRotation(new)
-            return
-        }
+        // Never switch ids without the server's say-so. 1.7.0 shipped without a server
+        // configured and did switch here on the spot — so the phone dropped the old id while
+        // the server still held every name under it.
+        if (!api.isConfigured) return
 
         val now = nowMillis()
         if (now < nextRotationAttemptAt) return
@@ -205,6 +203,34 @@ class SyncEngine(
         } else {
             nextRotationAttemptAt = now + ROTATION_RETRY_MILLIS
         }
+    }
+
+    /**
+     * One full pull, done before the first push after updating to this version.
+     *
+     * 1.7.0 went out without a server configured, and on those phones the device id switched
+     * locally without the server knowing. Such a phone still believes it holds its names, while
+     * the server holds them under an id the phone no longer has. A normal pull would never
+     * correct that — nothing about those member rows has changed since the watermark — so the
+     * phone would go on writing as somebody the server does not recognise, and every expense it
+     * pushed would be refused and then reconciled away.
+     *
+     * Pulling from zero rewrites every claim with what the server actually holds. Claims the
+     * phone lost show up as taken, the group asks the user to pick a name, and the admin (or
+     * the one-off SQL in backend/supabase/one-off) frees it. Local edits that have not been
+     * pushed survive: [SplitsRepository.applyRemote] keeps any row newer than the server's, and
+     * deletion reconciliation never touches a dirty row.
+     */
+    private suspend fun resyncIfNeeded() {
+        if (!repository.needsFullResync()) return
+        val groupIds = repository.knownGroupIds()
+        if (groupIds.isNotEmpty()) {
+            val snapshot = api.pull(groupIds, 0L, repository.deviceId).getOrThrow()
+            repository.applyRemote(snapshot = snapshot, requestedGroupIds = groupIds)
+            val watermark = repository.watermarkOf(snapshot)
+            if (watermark > repository.lastPulledAt()) repository.setLastPulledAt(watermark)
+        }
+        repository.markFullResyncDone()
     }
 
     /**
