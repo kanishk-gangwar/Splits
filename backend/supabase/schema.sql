@@ -64,6 +64,17 @@ create table if not exists public.splits_shares (
     primary key (expense_id, member_id)
 );
 
+-- Added after the first release, so they are ALTERs rather than part of the CREATEs above:
+-- re-running this file on an existing project picks them up.
+--
+--   simplify_debts        fewest payments (true) or every pairwise debt (false) on the
+--                         settle-up tab; only the admin's device may change it (splits_push).
+--   created_by_member_id  the member who added an entry. Stamped by splits_push from the
+--                         pushing device's own claim, never from the payload, and frozen after
+--                         that — it is what decides who may edit or delete the entry.
+alter table public.splits_groups   add column if not exists simplify_debts boolean not null default true;
+alter table public.splits_expenses add column if not exists created_by_member_id text;
+
 create index if not exists splits_members_group    on public.splits_members(group_id);
 create index if not exists splits_expenses_group   on public.splits_expenses(group_id);
 create index if not exists splits_expenses_updated on public.splits_expenses(group_id, updated_at);
@@ -99,6 +110,12 @@ begin
             and (category_id is null or length(category_id) <= 64)
             and length(paid_by_member_id) <= 64 and length(kind) <= 32
             and amount_minor between -1000000000000000 and 1000000000000000
+        );
+    end if;
+
+    if not exists (select 1 from pg_constraint where conname = 'splits_expenses_creator_sane') then
+        alter table public.splits_expenses add constraint splits_expenses_creator_sane check (
+            created_by_member_id is null or length(created_by_member_id) <= 64
         );
     end if;
 
@@ -204,6 +221,27 @@ as $$
     );
 $$;
 
+-- The participant this device *is* in a group, or null when it has picked no name there. A
+-- device that holds the invite but no name can read the group; it cannot write to it — every
+-- entry is attributed to somebody, and "somebody" has to exist. splits_push uses this both to
+-- gate expense writes and to stamp who added a new entry.
+create or replace function public.splits_member_of(p_group_id text, p_device_id text)
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+    select m.id
+    from public.splits_members m
+    where m.group_id = p_group_id
+      and p_device_id is not null
+      and m.claimed_by_device_id = p_device_id
+      and m.deleted = false
+    order by m.created_at
+    limit 1;
+$$;
+
 -- ------------------------------------------------------------------ pull by id --
 
 -- Returns everything in the given groups that changed after p_since.
@@ -269,6 +307,7 @@ begin
                 'id', g.id, 'name', g.name, 'emoji', g.emoji,
                 'currency_code', g.currency_code, 'invite_code', g.invite_code,
                 'admin_member_id', g.admin_member_id,
+                'simplify_debts', g.simplify_debts,
                 'created_at', g.created_at, 'updated_at', g.updated_at, 'deleted', g.deleted
             ))
             from public.splits_groups g
@@ -296,7 +335,7 @@ begin
                 'id', e.id, 'group_id', e.group_id, 'title', e.title,
                 'amount_minor', e.amount_minor, 'paid_by_member_id', e.paid_by_member_id,
                 'kind', e.kind, 'category_id', e.category_id, 'note', e.note,
-                'occurred_at', e.occurred_at,
+                'occurred_at', e.occurred_at, 'created_by_member_id', e.created_by_member_id,
                 'created_at', e.created_at, 'updated_at', e.updated_at, 'deleted', e.deleted
             ))
             from public.splits_expenses e
@@ -422,6 +461,21 @@ $$;
 --     delete the group.
 --   * admin_member_id — frozen after the group row is first inserted. The app sets it once at
 --     creation and has no transfer flow, so there is nothing legitimate to allow here.
+--
+-- Two more rules narrow "everyone holding the invite" for expenses specifically. They are
+-- product rules rather than security ones — nothing here guards a secret — but a button the
+-- UI hides is not a rule, so they live here as well:
+--
+--   * Writing an expense needs a name. A device that has not claimed a participant in the group
+--     is a spectator: its expense rows are dropped on the floor (the app never sends them).
+--   * An entry is changed or deleted only by whoever added it, or by the group's admin. A new
+--     row is stamped with the pushing device's own member, whatever the payload says, and that
+--     stamp never changes afterwards. Rows written before the column existed have no owner and
+--     stay editable by anyone with a name, which is what they always were.
+--
+-- And one for groups: simplify_debts is how the whole group settles up, so only the admin's
+-- device can flip it. Anyone else's push carries their copy of it along with a rename, and
+-- that copy is ignored.
 drop function if exists public.splits_push(jsonb);
 
 create or replace function public.splits_push(
@@ -451,13 +505,14 @@ begin
 
     insert into public.splits_groups (
         id, name, emoji, currency_code, invite_code, admin_member_id,
-        created_at, updated_at, deleted
+        created_at, updated_at, deleted, simplify_debts
     )
     select
         g->>'id', g->>'name', g->>'emoji', g->>'currency_code', g->>'invite_code',
         nullif(g->>'admin_member_id', ''),
         (g->>'created_at')::bigint, least((g->>'updated_at')::bigint, v_max_ts),
-        coalesce((g->>'deleted')::boolean, false)
+        coalesce((g->>'deleted')::boolean, false),
+        coalesce((g->>'simplify_debts')::boolean, true)
     from jsonb_array_elements(coalesce(p_payload->'groups', '[]'::jsonb)) as g
     on conflict (id) do update set
         name            = excluded.name,
@@ -467,6 +522,13 @@ begin
         -- after creation. Allowing admin_member_id here let anyone with the invite point it
         -- at a name they had claimed and become admin of somebody else's group.
         updated_at      = excluded.updated_at,
+        -- How the group settles up is the admin's call. A non-admin's push still carries the
+        -- column (it comes with any rename), so their copy — possibly stale — is ignored.
+        simplify_debts  = case
+            when public.splits_is_group_admin(public.splits_groups.id, v_device)
+                then excluded.simplify_debts
+            else public.splits_groups.simplify_debts
+        end,
         -- Flagging a group deleted is how the client tells everyone else it is gone, so it is
         -- an admin act too. Without this check, blocking splits_delete_group would achieve
         -- nothing: anyone with the invite could push deleted = true and every other device
@@ -536,36 +598,56 @@ begin
         end
     where excluded.updated_at >= public.splits_members.updated_at;
 
-    insert into public.splits_expenses (
-        id, group_id, title, amount_minor, paid_by_member_id, kind,
-        category_id, note, occurred_at, created_at, updated_at, deleted
+    -- Only rows the upsert actually accepts come back out of the CTE, and only those get their
+    -- shares replaced below: an edit this device was not allowed to make must not be able to
+    -- swap the shares out from under the row it failed to change.
+    with written as (
+        insert into public.splits_expenses (
+            id, group_id, title, amount_minor, paid_by_member_id, kind,
+            category_id, note, occurred_at, created_at, updated_at, deleted,
+            created_by_member_id
+        )
+        select
+            e->>'id', e->>'group_id', e->>'title',
+            (e->>'amount_minor')::bigint, e->>'paid_by_member_id',
+            coalesce(e->>'kind', 'EXPENSE'),
+            nullif(e->>'category_id', ''), nullif(e->>'note', ''),
+            (e->>'occurred_at')::bigint, (e->>'created_at')::bigint,
+            least((e->>'updated_at')::bigint, v_max_ts),
+            coalesce((e->>'deleted')::boolean, false),
+            -- Whoever this device *is* in the group, not whoever the payload claims.
+            public.splits_member_of(e->>'group_id', v_device)
+        from jsonb_array_elements(coalesce(p_payload->'expenses', '[]'::jsonb)) as e
+        -- A device with no name in the group writes nothing: neither new rows nor edits.
+        where public.splits_member_of(e->>'group_id', v_device) is not null
+        on conflict (id) do update set
+            title             = excluded.title,
+            amount_minor      = excluded.amount_minor,
+            paid_by_member_id = excluded.paid_by_member_id,
+            kind              = excluded.kind,
+            category_id       = excluded.category_id,
+            note              = excluded.note,
+            occurred_at       = excluded.occurred_at,
+            updated_at        = excluded.updated_at,
+            deleted           = excluded.deleted
+            -- created_by_member_id is deliberately absent: the owner of an entry is fixed.
+        where excluded.updated_at >= public.splits_expenses.updated_at
+          -- Creator or admin only. A null owner is a row from before entries had one.
+          and (
+              public.splits_expenses.created_by_member_id is null
+              or public.splits_expenses.created_by_member_id
+                     = public.splits_member_of(public.splits_expenses.group_id, v_device)
+              or public.splits_is_group_admin(public.splits_expenses.group_id, v_device)
+          )
+        returning id
     )
-    select
-        e->>'id', e->>'group_id', e->>'title',
-        (e->>'amount_minor')::bigint, e->>'paid_by_member_id',
-        coalesce(e->>'kind', 'EXPENSE'),
-        nullif(e->>'category_id', ''), nullif(e->>'note', ''),
-        (e->>'occurred_at')::bigint, (e->>'created_at')::bigint,
-        least((e->>'updated_at')::bigint, v_max_ts),
-        coalesce((e->>'deleted')::boolean, false)
-    from jsonb_array_elements(coalesce(p_payload->'expenses', '[]'::jsonb)) as e
-    on conflict (id) do update set
-        title             = excluded.title,
-        amount_minor      = excluded.amount_minor,
-        paid_by_member_id = excluded.paid_by_member_id,
-        kind              = excluded.kind,
-        category_id       = excluded.category_id,
-        note              = excluded.note,
-        occurred_at       = excluded.occurred_at,
-        updated_at        = excluded.updated_at,
-        deleted           = excluded.deleted
-    where excluded.updated_at >= public.splits_expenses.updated_at;
-
-    -- Shares are replaced wholesale for every expense in this push, because an edit can
-    -- remove a participant and a row-by-row upsert would leave that stale share behind.
-    select coalesce(array_agg(e->>'id'), '{}')
+    select coalesce(array_agg(id), '{}')
     into touched_expense_ids
-    from jsonb_array_elements(coalesce(p_payload->'expenses', '[]'::jsonb)) as e;
+    from written;
+
+    -- Shares are replaced wholesale for every expense this push was allowed to write, because
+    -- an edit can remove a participant and a row-by-row upsert would leave that stale share
+    -- behind.
 
     if array_length(touched_expense_ids, 1) is not null then
         delete from public.splits_shares where expense_id = any(touched_expense_ids);
@@ -656,6 +738,55 @@ end;
 $$;
 
 
+-- ------------------------------------------------------------- device rotation --
+
+-- An install moving from one device id to another, keeping every name it holds.
+--
+-- Why it exists: device ids used to be minted at random and kept in the app's own database,
+-- so uninstalling the app lost the id and every claim with it. They are now derived from the
+-- platform's stable install id and survive a reinstall — but an install that already has a
+-- random id cannot simply start using the new one, or the server would see a stranger. This
+-- moves its claims across, once.
+--
+-- Authorisation is the old id itself: it is a secret, and holding it already lets you release
+-- every one of its names and claim them again under another, which is all this does — in one
+-- step, so nobody can slip in between. Groups where the new id already holds a name are left
+-- alone, since a device can never be two people in one group.
+create or replace function public.splits_rotate_device(p_old_device_id text, p_new_device_id text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    v_old   text := public.splits_device(p_old_device_id);
+    v_new   text := public.splits_device(p_new_device_id);
+    v_moved integer;
+begin
+    if v_old is null or v_new is null then
+        return jsonb_build_object('ok', false, 'reason', 'bad_device_id');
+    end if;
+    if v_old = v_new then
+        return jsonb_build_object('ok', true, 'moved', 0);
+    end if;
+
+    with moved as (
+        update public.splits_members m
+        set claimed_by_device_id = v_new
+        where m.claimed_by_device_id = v_old
+          and not exists (
+              select 1 from public.splits_members x
+              where x.group_id = m.group_id
+                and x.claimed_by_device_id = v_new
+          )
+        returning 1
+    )
+    select count(*) into v_moved from moved;
+
+    return jsonb_build_object('ok', true, 'moved', v_moved);
+end;
+$$;
+
 -- ----------------------------------------------------------------------- purge --
 
 -- Sweeps up any soft-deleted rows, across every group in the project.
@@ -735,9 +866,12 @@ revoke all on function public.splits_device(text)                    from public
 revoke all on function public.splits_claim_sentinel()                from public, anon, authenticated;
 revoke all on function public.splits_is_group_admin(text, text)      from public, anon, authenticated;
 revoke all on function public.splits_is_admin_member(text)           from public, anon, authenticated;
+revoke all on function public.splits_member_of(text, text)           from public, anon, authenticated;
+revoke all on function public.splits_rotate_device(text, text)       from public, anon, authenticated;
 
 grant execute on function public.splits_pull(text[], bigint, text)   to anon, authenticated;
 grant execute on function public.splits_resolve_invite(text, text)   to anon, authenticated;
 grant execute on function public.splits_push(jsonb, text)            to anon, authenticated;
 grant execute on function public.splits_delete_group(text, text)     to anon, authenticated;
+grant execute on function public.splits_rotate_device(text, text)    to anon, authenticated;
 -- splits_purge_deleted is intentionally NOT granted. See the note above it.

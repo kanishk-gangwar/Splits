@@ -29,6 +29,13 @@ data class Group(
     val updatedAt: Long,
     val archived: Boolean,
     val hidden: Boolean,
+    /**
+     * How the settle-up tab lists what is owed. `true` (the default) shows the fewest payments
+     * that clear the group; `false` shows every pairwise debt exactly as the expenses created
+     * it. Splitwise calls the same switch "simplify debts". It is a fact about the group, so
+     * it syncs, and only the admin may flip it — `splits_push` enforces that server-side.
+     */
+    val simplifyDebts: Boolean = true,
 )
 
 data class Member(
@@ -59,6 +66,12 @@ data class Expense(
     val createdAt: Long,
     val updatedAt: Long,
     val splits: List<Split>,
+    /**
+     * The participant who added this entry — a member id, not a device id, so it survives the
+     * creator moving phones. Null on rows written before this field existed; those fall back
+     * to the payer in [GroupDetail.canEditExpense].
+     */
+    val createdByMemberId: String? = null,
 ) {
     val isReimbursement: Boolean get() = kind == ExpenseKind.REIMBURSEMENT
 
@@ -84,6 +97,31 @@ data class GroupDetail(
         val me = meIn(deviceId) ?: return false
         return group.adminMemberId == me.id
     }
+
+    /**
+     * Whether this device has picked a name here. Holding the invite lets you *see* the group;
+     * writing to it — expenses, settlements, the group's details — needs a name, because every
+     * entry is attributed to somebody and balances mean nothing to a device that is nobody.
+     */
+    fun hasJoined(deviceId: String?): Boolean = meIn(deviceId) != null
+
+    /**
+     * An entry belongs to whoever added it. Only they can change or delete it, with the admin
+     * as the one exception — a creator who has left the group, or whose phone is gone, would
+     * otherwise leave an entry nobody can ever fix. Rows from before entries recorded their
+     * creator fall back to the payer, which is the nearest thing to an owner they have.
+     *
+     * `splits_push` applies the same rule server-side; this only decides what the UI offers.
+     */
+    fun canEditExpense(deviceId: String?, expense: Expense): Boolean {
+        val me = meIn(deviceId) ?: return false
+        if (isAdmin(deviceId)) return true
+        val owner = expense.createdByMemberId ?: expense.paidByMemberId
+        return owner == me.id
+    }
+
+    /** Only the admin decides how the group settles up — see [Group.simplifyDebts]. */
+    fun canChangeSettleMode(deviceId: String?): Boolean = isAdmin(deviceId)
 
     /**
      * Your own name is always yours to fix. Everyone else's is the admin's business only —

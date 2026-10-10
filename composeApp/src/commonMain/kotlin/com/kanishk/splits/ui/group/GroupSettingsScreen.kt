@@ -33,6 +33,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -101,6 +102,11 @@ fun GroupSettingsScreen(
     // Archived means read-only. Archiving, hiding, sharing and deleting stay available —
     // those are how you get *out* of the state, so locking them would be a trap.
     val readOnly = group.archived
+
+    // The group's own details — name, icon, currency — are for people who are *in* it. A
+    // device that has the invite but no name can still manage participants (it may need to
+    // add itself) and everything under "This group", which is about its own shelf.
+    val canEditDetails = !readOnly && me != null
 
     var name by remember(group.id) { mutableStateOf(group.name) }
     var emoji by remember(group.id) { mutableStateOf(group.emoji) }
@@ -175,7 +181,7 @@ fun GroupSettingsScreen(
                                             Modifier
                                         }
                                     )
-                                    .clickable(enabled = !readOnly) {
+                                    .clickable(enabled = canEditDetails) {
                                         emoji = candidate
                                         persistGroup()
                                     },
@@ -194,7 +200,7 @@ fun GroupSettingsScreen(
                     onValueChange = { name = it },
                     label = { Text("Group name") },
                     singleLine = true,
-                    enabled = !readOnly,
+                    enabled = canEditDetails,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -217,7 +223,7 @@ fun GroupSettingsScreen(
                                             MaterialTheme.colorScheme.surfaceContainer
                                         }
                                     )
-                                    .clickable(enabled = !readOnly) {
+                                    .clickable(enabled = canEditDetails) {
                                         currency = option.code
                                         persistGroup()
                                     }
@@ -319,6 +325,16 @@ fun GroupSettingsScreen(
             }
 
             item {
+                SettleUpSection(
+                    simplify = group.simplifyDebts,
+                    canChange = !readOnly && current.canChangeSettleMode(repository.deviceId),
+                    onChange = { simplify ->
+                        scope.launch { repository.setSimplifyDebts(groupId, simplify) }
+                    },
+                )
+            }
+
+            item {
                 VSpace(4.dp)
                 SectionLabel("This group")
             }
@@ -402,7 +418,7 @@ fun GroupSettingsScreen(
 
     // The name field has no Save button, so it autosaves once typing pauses.
     LaunchedEffect(name) {
-        if (!readOnly && name.isNotBlank() && name != group.name) {
+        if (canEditDetails && name.isNotBlank() && name != group.name) {
             delay(400)
             repository.updateGroup(groupId, name, emoji, currency)
         }
@@ -531,6 +547,64 @@ fun GroupSettingsScreen(
             confirmButton = { TextButton(onClick = { removeBlocked = null }) { Text("Got it") } },
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         )
+    }
+}
+
+/**
+ * The one switch Splitwise users go looking for. On, the settle-up tab shows the fewest
+ * payments that clear the group; off, it shows every pairwise debt exactly as the expenses
+ * created it. It is the admin's call because it changes what everyone is asked to pay and to
+ * whom; everyone else sees the setting and who can change it.
+ */
+@Composable
+private fun SettleUpSection(
+    simplify: Boolean,
+    canChange: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Column {
+        SectionLabel("Settle up")
+        VSpace(10.dp)
+        SplitsCard(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Simplify debts",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = if (simplify) {
+                            "Fewest payments that clear the group. You may be asked to pay " +
+                                "someone you never split a bill with."
+                        } else {
+                            "Every debt as the expenses created it. More payments, each one " +
+                                "traceable to what it came from."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = simplify,
+                    onCheckedChange = onChange,
+                    enabled = canChange,
+                    modifier = Modifier.padding(start = 12.dp),
+                )
+            }
+        }
+        if (!canChange) {
+            VSpace(6.dp)
+            Text(
+                "Only the group admin can change this. It applies to everyone in the group.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+        }
     }
 }
 

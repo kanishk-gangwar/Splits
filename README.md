@@ -27,7 +27,13 @@ is listed too, so "how much did this trip cost me?" is answered without arithmet
 **Settle up in provably the fewest payments.**
 The settle-up list is the true minimum number of transfers, not the greedy approximation most
 splitters ship — that one overshoots on about a sixth of groups because it misses debts that
-cancel between two people on their own.
+cancel between two people on their own. Prefer to pay each person exactly what you owe
+them? The group admin can switch *Simplify debts* off in group settings, Splitwise-style.
+
+**Your entries are yours.**
+Only the person who added an expense or settlement can edit or delete it, with the group admin
+as the backstop. And holding an invite is not enough to write to a group — pick your name
+first.
 
 **Two people recording the same payment counts once.**
 Both of you can tap Record on the same "A pays B" line, on two phones, offline, at the same
@@ -124,6 +130,7 @@ reconciles, the server security model, and the build's sharp edges.
 
 ## Notes on identity
 
-There is no login. Each install generates a random device id, and claiming a name in a group
-writes that id against the member row. This is why the invite flow needs no phone number —
+There is no login. Each install has a device id, derived from the platform's per-app install
+id so that it survives an uninstall, and claiming a name in a group writes that id against the
+member row. Reinstall the app, open the invite again, and your name is still yours. This is why the invite flow needs no phone number —
 and why hiding a group is a per-device decision rather than something other participants see.

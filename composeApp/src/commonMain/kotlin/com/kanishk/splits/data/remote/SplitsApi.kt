@@ -14,7 +14,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 
 /**
- * A thin wrapper over the four Postgres functions. There is no PostgREST table access at
+ * A thin wrapper over the five Postgres functions. There is no PostgREST table access at
  * all — RLS blocks it — so this is the entire server surface the app can reach.
  */
 class SplitsApi(
@@ -36,6 +36,13 @@ class SplitsApi(
 
     suspend fun deleteGroup(groupId: String, deviceId: String): Result<RpcResult> =
         rpc("splits_delete_group", DeleteGroupArgs(groupId, deviceId))
+
+    /**
+     * Moves every claim held by [oldDeviceId] to [newDeviceId]. Used once, when an install
+     * that minted a random id learns it has a stable one — see `SplitsRepository.deviceId`.
+     */
+    suspend fun rotateDevice(oldDeviceId: String, newDeviceId: String): Result<RpcResult> =
+        rpc("splits_rotate_device", RotateDeviceArgs(oldDeviceId, newDeviceId))
 
     private suspend inline fun <reified Args, reified Out> rpc(
         function: String,

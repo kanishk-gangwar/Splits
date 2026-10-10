@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.kanishk.splits.db.SplitsDatabase
@@ -43,6 +44,25 @@ actual fun copyToClipboard(text: String) {
 }
 
 actual fun deviceLabel(): String = "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}"
+
+/**
+ * `ANDROID_ID` is, from Android 8 (our minSdk), a 64-bit value scoped to the app's signing
+ * key, the user and the device: no other app can read it, and it survives uninstalling and
+ * reinstalling this one. It only changes on a factory reset or a different signing key — a
+ * debug build and a release build are two different installs, which is what you would want.
+ *
+ * That makes it exactly the thing a "device id" was always meant to be. The old approach —
+ * minting a random id and keeping it in our own database — lost the id, and with it every
+ * claimed name, the moment the app was uninstalled.
+ */
+@SuppressLint("HardwareIds")
+actual fun stableInstallId(): String? =
+    runCatching { Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ANDROID_ID) }
+        .getOrNull()
+        ?.takeIf { it.isNotBlank() && it != BROKEN_EMULATOR_ANDROID_ID }
+
+/** The one well-known duplicate value, from an old emulator bug. Treated as "no id". */
+private const val BROKEN_EMULATOR_ANDROID_ID = "9774d56d682e549c"
 
 actual fun openUrl(url: String) {
     val view = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {

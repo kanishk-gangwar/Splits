@@ -52,6 +52,15 @@ actual fun copyToClipboard(text: String) {
 actual fun deviceLabel(): String = UIDevice.currentDevice.name
 
 /**
+ * `identifierForVendor` persists across a reinstall only while some other app from the same
+ * vendor is still installed; with none left it resets. The iOS build is not distributed, so
+ * that is the best that is on offer without going through the keychain, and a reset simply
+ * lands on the same fresh-install behaviour as before.
+ */
+actual fun stableInstallId(): String? =
+    UIDevice.currentDevice.identifierForVendor?.UUIDString?.takeIf { it.isNotBlank() }
+
+/**
  * The update button points at an APK, which iOS cannot install — there is no sideloading path
  * comparable to one, and the iOS build is not distributed at all (SETUP.md). Opening the link
  * still lands on the release page, which is the honest thing to show rather than a dead button.

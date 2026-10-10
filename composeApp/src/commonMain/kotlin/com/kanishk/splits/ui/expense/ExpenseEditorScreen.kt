@@ -189,6 +189,16 @@ fun ExpenseEditorScreen(
     val amountMinor = parseAmountToMinor(amountText) ?: 0L
     val isReimbursement = kind == ExpenseKind.REIMBURSEMENT
 
+    // Who this device is in the group. Every entry is attributed to somebody, so without a
+    // name there is nothing to save; and an existing entry is only the creator's (or the
+    // admin's) to change. The group screen already withholds the routes in here from anyone
+    // else, but a stale back stack could still land them on this form.
+    val me = current.meIn(repository.deviceId)
+    val loadedExpense = existing
+    val mayEdit = loadedExpense == null || current.canEditExpense(repository.deviceId, loadedExpense)
+    val creatorName = loadedExpense
+        ?.let { current.member(it.createdByMemberId ?: it.paidByMemberId)?.name }
+
     val participants = current.members.filter { selected[it.id] == true }
     val computedSplits = planSplits(
         kind = kind,
@@ -204,6 +214,8 @@ fun ExpenseEditorScreen(
     // Last line of defence: the group screen already hides every route in here when the group
     // is archived, but a stale back stack could still land someone on this form.
     val canSave = !current.group.archived &&
+        me != null &&
+        mayEdit &&
         amountMinor > 0 &&
         paidBy != null &&
         computedSplits.isNotEmpty() &&
@@ -243,6 +255,7 @@ fun ExpenseEditorScreen(
                 occurredAt = occurredAt,
                 splits = computedSplits,
                 preferredId = preferredId,
+                createdByMemberId = me?.id,
             )
             onDone()
         }
@@ -255,7 +268,7 @@ fun ExpenseEditorScreen(
                 title = if (editing) "Edit entry" else if (isReimbursement) "Record settlement" else "New expense",
                 onBack = onBack,
                 actions = {
-                    if (editing) {
+                    if (editing && mayEdit) {
                         IconButton(onClick = { confirmDelete = true }) {
                             Icon(
                                 Icons.Outlined.DeleteOutline,
@@ -293,7 +306,14 @@ fun ExpenseEditorScreen(
             }
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
+        // The whole Scaffold padding, bottom included. The bottom bar already grows by the
+        // keyboard's height (its inset modifier), so this makes the column — and the list in
+        // it — *end* above both, rather than run on underneath them. That matters for more
+        // than scroll range: Compose scrolls a newly focused field into view only when it is
+        // outside the list's bounds, and a list that extends behind the keyboard counts a
+        // field under the keyboard as perfectly visible. Padding the content instead of the
+        // list was what left the note hidden while typing.
+        Column(Modifier.fillMaxSize().padding(padding)) {
             // The amount sits outside the scrolling area. It is the one field you always want
             // in view while the keyboard is up; inside the list it could scroll away or end up
             // behind the button.
@@ -305,17 +325,24 @@ fun ExpenseEditorScreen(
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                // Reserve the bottom bar *and* the keyboard. Without this the list's
-                // viewport runs on behind them, so Compose believes a focused split field is
-                // already visible and never scrolls it up — which is what left the exact
-                // amounts hidden while typing.
-                contentPadding = PaddingValues(
-                    start = 16.dp,
-                    end = 16.dp,
-                    bottom = padding.calculateBottomPadding() + 24.dp,
-                ),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+            if (editing && creatorName != null) {
+                item {
+                    Text(
+                        text = if (mayEdit) {
+                            "Added by $creatorName."
+                        } else {
+                            "Added by $creatorName. Only they or the group admin can change it."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                }
+            }
+
             item {
                 SegmentedControl(
                     options = listOf("Expense", "Settlement"),
@@ -520,6 +547,19 @@ private fun AmountField(
     onValueChange: (String) -> Unit,
     currencyCode: String,
 ) {
+    // One style for the field and its "0" placeholder. The line height is the point: the theme
+    // hands every text a 24sp line height, and an *empty* field sizes its cursor from that line
+    // height rather than from any glyphs — so the cursor started at half height and jumped to
+    // full size on the first digit. Pinning the line height to the font size keeps the cursor
+    // one size from the moment the field is focused.
+    val amountStyle = LocalTextStyle.current.copy(
+        fontSize = AmountFontSize,
+        lineHeight = AmountFontSize,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+        textAlign = TextAlign.Center,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+
     Column(
         Modifier.fillMaxWidth().padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -537,12 +577,7 @@ private fun AmountField(
                     val cleaned = input.filter { it.isDigit() || it == '.' }
                     if (cleaned.count { it == '.' } <= 1) onValueChange(cleaned)
                 },
-                textStyle = LocalTextStyle.current.copy(
-                    fontSize = 44.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                ),
+                textStyle = amountStyle,
                 singleLine = true,
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 keyboardOptions = KeyboardOptions(
@@ -553,9 +588,10 @@ private fun AmountField(
                         if (value.isEmpty()) {
                             Text(
                                 "0",
-                                fontSize = 44.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                style = amountStyle.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        .copy(alpha = 0.4f),
+                                ),
                             )
                         }
                         inner()
@@ -569,6 +605,8 @@ private fun AmountField(
 
 /** Keeps the amount field from collapsing to nothing when empty. */
 private val IntrinsicWidthMin = 200.dp
+
+private val AmountFontSize = 44.sp
 
 @Composable
 private fun CategoryPicker(

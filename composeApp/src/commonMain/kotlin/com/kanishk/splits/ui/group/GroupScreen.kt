@@ -143,6 +143,11 @@ fun GroupScreen(
     // point into editing is covered.
     val readOnly = group.archived
 
+    // Holding the invite shows you the group; adding to it needs a name. Until this device has
+    // picked one there is nobody to attribute an entry to, so the add and record controls stay
+    // away and the prompt below the header says why.
+    val canWrite = !readOnly && me != null
+
     val cutoff = remember(now, pagesLoaded) { expensePageCutoffMillis(now, pagesLoaded) }
     val hasOlder = remember(current.expenses, filterMemberId, cutoff) {
         current.expenses.involving(filterMemberId).hasOccurredBefore(cutoff)
@@ -221,7 +226,7 @@ fun GroupScreen(
             )
         },
         floatingActionButton = {
-            if (!readOnly) {
+            if (canWrite) {
                 ExtendedFloatingActionButton(
                     onClick = onAddExpense,
                     containerColor = MaterialTheme.colorScheme.primary,
@@ -259,7 +264,7 @@ fun GroupScreen(
             }
 
             item {
-                val owing = summary.settlements.size
+                val owing = summary.settlementsFor(group.simplifyDebts).size
                 SegmentedControl(
                     options = listOf(
                         "Expenses",
@@ -276,7 +281,7 @@ fun GroupScreen(
                 settleUpTab(
                     detail = current,
                     summary = summary,
-                    readOnly = readOnly,
+                    canRecord = canWrite,
                     onSettleUp = onSettleUp,
                 )
             } else if (tab == 0) {
@@ -293,6 +298,7 @@ fun GroupScreen(
 
                 expensesTab(
                     detail = current,
+                    deviceId = repository.deviceId,
                     myMemberId = me?.id,
                     filterMemberId = filterMemberId,
                     cutoffMillis = cutoff,
@@ -579,7 +585,7 @@ private fun IdentityPrompt(onPick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
                 Text(
-                    "Pick your name so balances know who you are.",
+                    "Pick your name to add expenses and see what you owe.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
                 )
@@ -593,6 +599,7 @@ private fun IdentityPrompt(onPick: () -> Unit) {
 
 private fun androidx.compose.foundation.lazy.LazyListScope.expensesTab(
     detail: GroupDetail,
+    deviceId: String?,
     myMemberId: String?,
     filterMemberId: String?,
     cutoffMillis: Long,
@@ -650,11 +657,15 @@ private fun androidx.compose.foundation.lazy.LazyListScope.expensesTab(
             )
         }
         items(dayExpenses, key = { it.id }) { expense ->
+            // An entry opens for editing only for whoever added it (or the admin). Everyone
+            // else gets a plain row — there is nothing on the form they would be allowed to
+            // change, so a tap that leads to a disabled Save would only confuse.
+            val editable = !readOnly && detail.canEditExpense(deviceId, expense)
             ExpenseRow(
                 expense = expense,
                 detail = detail,
                 myMemberId = myMemberId,
-                onClick = if (readOnly) null else ({ onEditExpense(expense.id) }),
+                onClick = if (editable) ({ onEditExpense(expense.id) }) else null,
             )
         }
     }
@@ -880,19 +891,25 @@ private fun androidx.compose.foundation.lazy.LazyListScope.balancesTab(
 // ---------------------------------------------------------------- settle up --
 
 /**
- * The shortest list of payments that clears the group, on its own tab. It used to sit under
- * every member's balance, which meant scrolling past all of them to reach the thing you were
- * going to act on — worse the bigger the group, which is exactly when it matters most.
+ * The payments that clear the group, on their own tab. It used to sit under every member's
+ * balance, which meant scrolling past all of them to reach the thing you were going to act on
+ * — worse the bigger the group, which is exactly when it matters most.
+ *
+ * Which payments depends on the group's `simplifyDebts` setting: the fewest that square
+ * everyone up, or every pairwise debt exactly as the expenses created it. The admin chooses
+ * in group settings; the line at the top says which is showing.
  */
 private fun androidx.compose.foundation.lazy.LazyListScope.settleUpTab(
     detail: GroupDetail,
     summary: com.kanishk.splits.model.GroupSummary,
-    readOnly: Boolean,
+    canRecord: Boolean,
     onSettleUp: (String, String, Long) -> Unit,
 ) {
     val currency = detail.group.currencyCode
+    val simplify = detail.group.simplifyDebts
+    val settlements = summary.settlementsFor(simplify)
 
-    if (summary.settlements.isEmpty()) {
+    if (settlements.isEmpty()) {
         item {
             EmptyState(
                 glyph = "🎉",
@@ -904,16 +921,21 @@ private fun androidx.compose.foundation.lazy.LazyListScope.settleUpTab(
     }
 
     item {
+        val count = settlements.size
         Text(
-            "The fewest payments that clear the group — " +
-                "${summary.settlements.size} in all.",
+            text = if (simplify) {
+                "The fewest payments that clear the group — $count in all."
+            } else {
+                "Who owes whom, exactly as the expenses add up — " +
+                    "$count payment${if (count == 1) "" else "s"}."
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 2.dp, start = 4.dp, end = 4.dp),
         )
     }
 
-    items(summary.settlements, key = { "s-${it.fromMemberId}-${it.toMemberId}" }) { settlement ->
+    items(settlements, key = { "s-${it.fromMemberId}-${it.toMemberId}" }) { settlement ->
         val from = detail.member(settlement.fromMemberId)
         val to = detail.member(settlement.toMemberId)
         SplitsCard(Modifier.fillMaxWidth()) {
@@ -946,7 +968,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.settleUpTab(
                     )
                 }
 
-                if (!readOnly) {
+                if (canRecord) {
                     TextButton(
                         onClick = {
                             onSettleUp(

@@ -15,6 +15,17 @@ expect fun copyToClipboard(text: String)
 expect fun deviceLabel(): String
 
 /**
+ * An identifier for this app on this device that outlives the app's own data — in particular
+ * one that is the same again after an uninstall and reinstall. Null when the platform has
+ * nothing of the kind, in which case identity falls back to a random id that lives and dies
+ * with the install.
+ *
+ * It is a *seed*, never used as-is: [deriveDeviceId] hashes it into the 32-hex shape the
+ * server expects, so the raw value is never sent anywhere.
+ */
+expect fun stableInstallId(): String?
+
+/**
  * Hands [url] to the browser. The one caller that matters is the update button, which points
  * at the APK on GitHub Releases: the download, the "install unknown apps" prompt and the
  * installer are all the platform's job, and an app that tried to own that flow would need

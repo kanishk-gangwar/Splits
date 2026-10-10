@@ -25,6 +25,7 @@ import com.kanishk.splits.model.OverallPosition
 import com.kanishk.splits.model.Split
 import com.kanishk.splits.model.nowMillis
 import com.kanishk.splits.model.summarise
+import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -46,12 +47,57 @@ class SplitsRepository(
     private val queries = database.splitsQueries
 
     /**
-     * Identity in this app is the device, not an account — participants prove who they are by
-     * picking their name off the invite screen. The id is minted once and never changes.
+     * The id this install would have if it were derived from the platform's stable install id
+     * (see [stableInstallId]), or null where the platform offers none.
      */
-    val deviceId: String = run {
-        val existing = queries.selectPref(PREF_DEVICE_ID).executeAsOneOrNull()
-        existing ?: newId().also { queries.upsertPref(PREF_DEVICE_ID, it) }
+    private val stableDeviceId: String? = deriveDeviceId(stableInstallId())
+
+    @Volatile
+    private var currentDeviceId: String = run {
+        val stored = queries.selectPref(PREF_DEVICE_ID).executeAsOneOrNull()
+        // A stored id is kept even when it differs from the stable one: it is what the server
+        // knows this install as, and switching underneath it would orphan every claim. The
+        // switch happens through [completeDeviceRotation] once the server has moved them.
+        stored ?: (stableDeviceId ?: newId()).also { queries.upsertPref(PREF_DEVICE_ID, it) }
+    }
+
+    /**
+     * Identity in this app is the device, not an account — participants prove who they are by
+     * picking their name off the invite screen.
+     *
+     * The id is derived from the platform's stable install id where there is one, which is
+     * what lets a reinstalled app find its names again: before this it was random and kept in
+     * this database, so an uninstall took it — and with it every claimed name — along. Installs
+     * that minted a random id under the old scheme are moved over once, by
+     * [pendingDeviceRotation] and [completeDeviceRotation].
+     */
+    val deviceId: String get() = currentDeviceId
+
+    /**
+     * `(old, new)` while this install still signs as an id minted before ids became stable, or
+     * null once it is on the stable id (or the platform has none). `SyncEngine` asks the server
+     * to move the claims first, then calls [completeDeviceRotation].
+     */
+    val pendingDeviceRotation: Pair<String, String>?
+        get() {
+            val target = stableDeviceId ?: return null
+            val current = currentDeviceId
+            return if (current == target) null else current to target
+        }
+
+    /**
+     * Switches this install to [newDeviceId]: every claim held locally is re-pointed and the
+     * id is persisted, so the next pull and push use it. Called only after the server has
+     * done the same, or when there is no server to tell.
+     */
+    suspend fun completeDeviceRotation(newDeviceId: String) = withContext(dispatcher) {
+        val old = currentDeviceId
+        if (old == newDeviceId) return@withContext
+        database.transaction {
+            queries.rotateClaims(newDeviceId, old)
+            queries.upsertPref(PREF_DEVICE_ID, newDeviceId)
+        }
+        currentDeviceId = newDeviceId
     }
 
     // ------------------------------------------------------------------ prefs --
@@ -160,6 +206,7 @@ class SplitsRepository(
                 hidden = false,
                 deleted = false,
                 dirty = true,
+                simplifyDebts = true,
             )
 
             queries.upsertMember(
@@ -198,6 +245,15 @@ class SplitsRepository(
         withContext(dispatcher) {
             queries.renameGroup(name.trim(), emoji, currencyCode, nowMillis(), groupId)
         }
+
+    /**
+     * Fewest payments or every pairwise debt on the settle-up tab — see `Group.simplifyDebts`.
+     * Admin-only: `GroupDetail.canChangeSettleMode` decides whether the switch is offered and
+     * `splits_push` refuses the change from any other device.
+     */
+    suspend fun setSimplifyDebts(groupId: String, simplify: Boolean) = withContext(dispatcher) {
+        queries.setGroupSimplifyDebts(simplify, nowMillis(), groupId)
+    }
 
     suspend fun addMember(groupId: String, name: String): String = withContext(dispatcher) {
         val id = newId()
@@ -281,6 +337,11 @@ class SplitsRepository(
      * means the user can see the first payment and is deliberately recording a second one, so
      * that gets an id of its own — the merge is only ever for the concurrent case, where the
      * other device's row has not arrived yet.
+     *
+     * [createdByMemberId] is the member this device holds in the group and is stamped on a new
+     * entry only. An edit keeps whoever added the row — including null on rows from before
+     * entries had an owner, which stay ownerless rather than being claimed by their first
+     * editor.
      */
     suspend fun saveExpense(
         groupId: String,
@@ -294,14 +355,15 @@ class SplitsRepository(
         occurredAt: Long,
         splits: List<Split>,
         preferredId: String? = null,
+        createdByMemberId: String? = null,
     ): String = withContext(dispatcher) {
         val now = nowMillis()
         val unusedPreferredId = preferredId
             ?.takeIf { queries.selectExpenseById(it).executeAsOneOrNull() == null }
         val id = expenseId ?: unusedPreferredId ?: newId()
-        val createdAt = expenseId
-            ?.let { queries.selectExpenseById(it).executeAsOneOrNull()?.createdAt }
-            ?: now
+        val existing = expenseId?.let { queries.selectExpenseById(it).executeAsOneOrNull() }
+        val createdAt = existing?.createdAt ?: now
+        val creator = if (existing != null) existing.createdByMemberId else createdByMemberId
 
         database.transaction {
             queries.upsertExpense(
@@ -318,6 +380,7 @@ class SplitsRepository(
                 updatedAt = now,
                 deleted = false,
                 dirty = true,
+                createdByMemberId = creator,
             )
             queries.deleteSplitsOfExpense(id)
             splits.filter { it.shareMinor != 0L }.forEach { split ->
@@ -397,6 +460,7 @@ class SplitsRepository(
                     createdAt = row.createdAt,
                     updatedAt = row.updatedAt,
                     deleted = row.deleted,
+                    simplifyDebts = row.simplifyDebts,
                 )
             },
             members = members.map { row ->
@@ -425,6 +489,7 @@ class SplitsRepository(
                     createdAt = row.createdAt,
                     updatedAt = row.updatedAt,
                     deleted = row.deleted,
+                    createdByMemberId = row.createdByMemberId,
                 )
             },
             // Shares ride along with their expense; the server replaces the whole set.
@@ -482,6 +547,7 @@ class SplitsRepository(
                     hidden = local?.hidden ?: false,
                     deleted = remote.deleted,
                     dirty = false,
+                    simplifyDebts = remote.simplifyDebts,
                 )
             }
 
@@ -552,6 +618,7 @@ class SplitsRepository(
                     updatedAt = remote.updatedAt,
                     deleted = remote.deleted,
                     dirty = false,
+                    createdByMemberId = remote.createdByMemberId,
                 )
                 // Replace the share set wholesale — an edit may have dropped a participant.
                 queries.deleteSplitsOfExpense(remote.id)
@@ -722,6 +789,7 @@ private fun GroupEntity.toModel() = Group(
     updatedAt = updatedAt,
     archived = archived,
     hidden = hidden,
+    simplifyDebts = simplifyDebts,
 )
 
 private fun MemberEntity.toModel() = Member(
@@ -745,4 +813,5 @@ private fun ExpenseEntity.toModel(splits: List<SplitEntity>) = Expense(
     createdAt = createdAt,
     updatedAt = updatedAt,
     splits = splits.map { Split(it.memberId, it.shareMinor) },
+    createdByMemberId = createdByMemberId,
 )

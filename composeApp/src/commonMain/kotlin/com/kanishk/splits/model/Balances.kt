@@ -30,12 +30,31 @@ data class Settlement(
 data class GroupSummary(
     val totalSpentMinor: Long,
     val balances: List<MemberBalance>,
+    /**
+     * What each person owes each other person, straight from the expenses: the key is
+     * (debtor, creditor) and the value is the gross amount, before the two directions of a
+     * pair are netted against each other. [pairwiseSettlements] does the netting.
+     */
+    val pairDebts: Map<Pair<String, String>, Long> = emptyMap(),
 ) {
     /**
      * Deliberately lazy. The home screen keeps a summary per group but only ever reads
      * balances, and working out the fewest payments is the one expensive thing in here.
      */
     val settlements: List<Settlement> by lazy { suggestSettlements(balances) }
+
+    /**
+     * Every debt as the expenses created it, one line per pair of people who owe each other
+     * anything, with the two directions netted. This is what "simplify debts" switched off
+     * looks like in Splitwise: more payments than [settlements], but each one traceable to the
+     * dinners it came from, which some groups prefer to a transfer to someone you never ate
+     * with.
+     */
+    val pairwiseSettlements: List<Settlement> by lazy { netPairDebts(pairDebts) }
+
+    /** The list the settle-up tab shows, by the group's [Group.simplifyDebts] setting. */
+    fun settlementsFor(simplify: Boolean): List<Settlement> =
+        if (simplify) settlements else pairwiseSettlements
 
     fun balanceOf(memberId: String?): Long =
         balances.firstOrNull { it.memberId == memberId }?.netMinor ?: 0L
@@ -59,6 +78,7 @@ fun summarise(members: List<Member>, expenses: List<Expense>): GroupSummary {
     val net = LinkedHashMap<String, Long>()
     val spent = LinkedHashMap<String, Long>()
     val paid = LinkedHashMap<String, Long>()
+    val pairDebts = LinkedHashMap<Pair<String, String>, Long>()
     members.forEach {
         net[it.id] = 0L
         spent[it.id] = 0L
@@ -78,6 +98,13 @@ fun summarise(members: List<Member>, expenses: List<Expense>): GroupSummary {
         net[expense.paidByMemberId] = (net[expense.paidByMemberId] ?: 0L) + expense.amountMinor
         for (split in expense.splits) {
             net[split.memberId] = (net[split.memberId] ?: 0L) - split.shareMinor
+            // Your own share of something you paid for is not a debt to anyone. A settlement
+            // lands here too: A paying B is a share of B's that A fronted, which is exactly a
+            // debt from B to A and cancels what B owed.
+            if (split.memberId != expense.paidByMemberId && split.shareMinor != 0L) {
+                val key = split.memberId to expense.paidByMemberId
+                pairDebts[key] = (pairDebts[key] ?: 0L) + split.shareMinor
+            }
         }
     }
 
@@ -92,6 +119,32 @@ fun summarise(members: List<Member>, expenses: List<Expense>): GroupSummary {
     return GroupSummary(
         totalSpentMinor = totalSpent,
         balances = balances,
+        pairDebts = pairDebts,
+    )
+}
+
+/**
+ * Collapses the two directions of every pair into one line. If A owes B 700 and B owes A
+ * 300, that is one payment of 400 from A to B — nobody wants to hand money back and forth.
+ * Biggest first, then by name, so the order is stable between renders.
+ */
+fun netPairDebts(pairDebts: Map<Pair<String, String>, Long>): List<Settlement> {
+    val seen = HashSet<Pair<String, String>>()
+    val result = mutableListOf<Settlement>()
+    for ((debtor, creditor) in pairDebts.keys) {
+        val forward = if (debtor < creditor) debtor to creditor else creditor to debtor
+        if (!seen.add(forward)) continue
+        val (x, y) = forward
+        val net = (pairDebts[x to y] ?: 0L) - (pairDebts[y to x] ?: 0L)
+        when {
+            net > 0 -> result += Settlement(fromMemberId = x, toMemberId = y, amountMinor = net)
+            net < 0 -> result += Settlement(fromMemberId = y, toMemberId = x, amountMinor = -net)
+        }
+    }
+    return result.sortedWith(
+        compareByDescending<Settlement> { it.amountMinor }
+            .thenBy { it.fromMemberId }
+            .thenBy { it.toMemberId }
     )
 }
 

@@ -32,7 +32,7 @@ and GitHub Pages (so shared invite links open something in a browser).
 
 Every table has row level security enabled with **no policies at all**, and direct grants are
 revoked. That means the anon key cannot read or write a single row through PostgREST. The only
-things it can call are four `SECURITY DEFINER` functions, and each already requires a secret
+things it can call are five `SECURITY DEFINER` functions, and each already requires a secret
 the caller must have been given:
 
 | Function | What it needs to know |
@@ -41,6 +41,7 @@ the caller must have been given:
 | `splits_resolve_invite` | the 8-character invite code |
 | `splits_push` | the group id it is writing into |
 | `splits_delete_group` | the group id **and** ownership of the admin member's device |
+| `splits_rotate_device` | the old device id — moves its claims to the new, reinstall-proof id |
 
 The invite link *is* the capability. That is the same trust model the app shows the user, so
 the server enforces exactly what the UI promises — including requirement 4, where deleting a

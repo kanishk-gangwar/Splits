@@ -49,6 +49,13 @@ private const val DAY_MILLIS = 24L * 60 * 60 * 1000
  */
 private const val AUTO_SYNC_DEBOUNCE_MILLIS = 700L
 
+/**
+ * How long to leave a failed device-id rotation alone before trying again. The usual reason it
+ * fails is a server that has not had the current schema.sql run on it yet, and hammering that
+ * every poll helps nobody; the old id keeps working in the meantime.
+ */
+private const val ROTATION_RETRY_MILLIS = 10L * 60 * 1000
+
 sealed interface JoinResult {
     data class Found(val groupId: String) : JoinResult
     data object NotFound : JoinResult
@@ -79,7 +86,15 @@ class SyncEngine(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    private var nextRotationAttemptAt = 0L
+
     init {
+        // Nothing to coordinate with when there is no server: an install that minted a random
+        // id can switch to its stable one on the spot.
+        if (!api.isConfigured) {
+            scope.launch { rotateDeviceIfNeeded() }
+        }
+
         // Watch for unsent work and upload it on its own. Without this a saved expense sat on
         // the device until the user happened to pull down to refresh, which is not something
         // anyone should have to know to do.
@@ -107,6 +122,11 @@ class SyncEngine(
         _status.value = SyncStatus.Syncing
 
         val outcome = runCatching {
+            // Before anything is signed with a device id: an install that still uses an id
+            // minted before ids became stable moves to the stable one first, so the push and
+            // pull below already speak as the id the server will know it by from now on.
+            rotateDeviceIfNeeded()
+
             val pending = repository.collectDirty()
             if (!pending.isEmpty) {
                 api.push(pending, repository.deviceId).getOrThrow()
@@ -153,6 +173,38 @@ class SyncEngine(
         )
         _status.value = result
         result
+    }
+
+    /**
+     * Moves this install from an id minted under the old random scheme to the stable one
+     * derived from the platform — see `SplitsRepository.deviceId`.
+     *
+     * The server goes first: `splits_rotate_device` re-points every claim the old id holds,
+     * and only then does the local database follow, so a failure anywhere leaves the install
+     * on an id that still works. The failure itself is swallowed on purpose — the most likely
+     * cause is a server that has not had the new function applied yet, and a sync that keeps
+     * working under the old id is far better than one that fails on every poll.
+     */
+    private suspend fun rotateDeviceIfNeeded() {
+        val (old, new) = repository.pendingDeviceRotation ?: return
+
+        if (!api.isConfigured) {
+            repository.completeDeviceRotation(new)
+            return
+        }
+
+        val now = nowMillis()
+        if (now < nextRotationAttemptAt) return
+
+        val moved = api.rotateDevice(old, new).fold(
+            onSuccess = { it.ok },
+            onFailure = { false },
+        )
+        if (moved) {
+            repository.completeDeviceRotation(new)
+        } else {
+            nextRotationAttemptAt = now + ROTATION_RETRY_MILLIS
+        }
     }
 
     /**

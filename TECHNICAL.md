@@ -118,9 +118,29 @@ Consequences, all intentional:
   left who can delete it. `GroupSettingsScreen` hides both controls rather than greying them
   out (a disabled delete on every row reads as "not right now" when the answer is "never
   yours") and tells non-admins why they are missing.
-- **Losing the device loses the identity.** There is no recovery. This was the accepted cost of
-  not asking for a phone number. Adding optional email recovery later would mean introducing
-  Supabase Auth and a `user_id` column alongside `claimed_by_device_id`, not replacing it.
+- **No name, no writes.** Holding the invite lets a device read the group; adding, editing or
+  settling needs a claimed name (`GroupDetail.hasJoined`), because every entry is attributed to
+  somebody. The group screen hides the add and record controls until a name is picked, and
+  `splits_push` drops expense rows from a device that holds no name in that group
+  (`splits_member_of`).
+- **An entry belongs to whoever added it.** Expenses carry `createdByMemberId`, stamped on
+  insert and never changed. `GroupDetail.canEditExpense` lets only that member — or the admin,
+  so an entry is never stuck when its creator leaves — open, edit or delete it. Rows from
+  before the column existed have no owner; the client treats the payer as owner and the server
+  leaves them editable by any named member. `splits_push` stamps the owner from the pushing
+  device's own claim rather than trusting the payload, and refuses edits and deletes from
+  anyone else.
+- **Reinstalling keeps the identity.** The device id is no longer random: it is
+  `deriveDeviceId(stableInstallId())`, a hash of Android's `ANDROID_ID` (scoped to the signing
+  key, survives uninstall, changes on factory reset) or iOS's `identifierForVendor`. So after a
+  reinstall, opening the invite again shows your old name as yours. Installs that minted a
+  random id under the old scheme move once: `SyncEngine` calls `splits_rotate_device(old, new)`,
+  which re-points every claim the old id holds, and only then switches locally — a failure
+  leaves the install on the old id, which keeps working. **Changing the release signing key
+  changes every Android device id**, which would orphan every claimed name; never rotate it.
+- **Losing the device still loses the identity**, short of the admin freeing the name. Adding
+  optional email recovery later would mean introducing Supabase Auth and a `user_id` column
+  alongside `claimed_by_device_id`, not replacing it.
 
 ---
 
@@ -391,7 +411,7 @@ permissive RLS policies and hope, the schema does the opposite:
 1. Every table has **RLS enabled with no policies at all**, and direct grants are revoked from
    `anon` and `authenticated`. The publishable key cannot read or write a single row through
    PostgREST. `backend/verify.sh` asserts this — a direct table read returns HTTP 401.
-2. All traffic goes through four `SECURITY DEFINER` functions, each of which already requires a
+2. All traffic goes through five `SECURITY DEFINER` functions, each of which already requires a
    secret the caller must have been given:
 
 | Function | Requires |
@@ -400,6 +420,7 @@ permissive RLS policies and hope, the schema does the opposite:
 | `splits_resolve_invite(code, device_id)` | the invite code |
 | `splits_push(payload, device_id)` | the group id it writes into |
 | `splits_delete_group(group_id, device_id)` | the group id **and** ownership of the admin member's device |
+| `splits_rotate_device(old_device_id, new_device_id)` | the old device id, which is itself the secret |
 
 `splits_purge_deleted` is a fifth function but is **not granted to `anon`**: it takes no secret
 and sweeps every group in the project. Run it from the SQL editor or pg_cron.
@@ -438,8 +459,12 @@ Two things follow, and both are enforced in `splits_push` rather than trusted to
 
 Flagging a group `deleted = true` through `splits_push` is gated on admin rights for the same
 reason: every other device honours that flag on its next pull, so it is as destructive as the
-delete itself. Ordinary edits are *not* gated — anyone in the group can add and change
-expenses, and that is the product, not an oversight.
+delete itself. Expense writes are gated more lightly: any device holding a name may add
+entries, but only the entry's creator or the admin may change or delete one (see
+[Identity](#identity-there-are-no-accounts)). Shares are replaced only for rows the upsert
+actually accepted, so a refused edit cannot swap them out underneath the row. The group's
+`simplify_debts` setting is admin-only for the same reason renaming others is: it changes
+what everyone is asked to pay.
 
 `splits_delete_group` is where all of this lands: the UI hides the delete action from
 non-admins, and the function independently checks that the calling device id matches the device
@@ -465,8 +490,12 @@ a gateway header) and fails open, so treat code length as the real defence.
 
 ### What is deliberately not defended
 
-- **Anyone with the invite can edit the group's data.** Expenses, names, amounts. These are
-  people splitting a dinner; the invite is the trust boundary and it is the one the UI presents.
+- **Anyone with the invite can claim a free name and then add entries.** These are people
+  splitting a dinner; the invite is the trust boundary and it is the one the UI presents.
+  What it no longer grants is changing somebody else's entries.
+- **Derived device ids carry 64 bits, not 128.** `ANDROID_ID` is a 64-bit value, so a device
+  id derived from it has that much entropy. Guessing one still means ~2^63 RPC calls against
+  a specific device's claim, which is not a realistic attack on a group-splitting app.
 - **Volume.** Payload sizes and column lengths are capped and pulls are bounded, but a
   determined attacker with a valid group id can still churn writes. There is no per-caller
   quota, because there is no caller identity to hang one on.

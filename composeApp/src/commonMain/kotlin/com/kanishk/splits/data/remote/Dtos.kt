@@ -19,6 +19,8 @@ data class RemoteGroup(
     @SerialName("created_at") val createdAt: Long,
     @SerialName("updated_at") val updatedAt: Long,
     val deleted: Boolean = false,
+    /** Defaults to true so a server from before the column existed reads as "unchanged". */
+    @SerialName("simplify_debts") val simplifyDebts: Boolean = true,
 )
 
 @Serializable
@@ -56,6 +58,11 @@ data class RemoteExpense(
     @SerialName("created_at") val createdAt: Long,
     @SerialName("updated_at") val updatedAt: Long,
     val deleted: Boolean = false,
+    /**
+     * Who added the entry. Advisory on the way up — `splits_push` stamps a new row with the
+     * member the pushing device actually holds, and never lets an edit change it.
+     */
+    @SerialName("created_by_member_id") val createdByMemberId: String? = null,
 )
 
 @Serializable
@@ -130,6 +137,13 @@ internal data class PushArgs(
 internal data class DeleteGroupArgs(
     @SerialName("p_group_id") val groupId: String,
     @SerialName("p_device_id") val deviceId: String,
+)
+
+/** Both ids are secrets; knowing the old one is what authorises moving its claims. */
+@Serializable
+internal data class RotateDeviceArgs(
+    @SerialName("p_old_device_id") val oldDeviceId: String,
+    @SerialName("p_new_device_id") val newDeviceId: String,
 )
 
 @Serializable

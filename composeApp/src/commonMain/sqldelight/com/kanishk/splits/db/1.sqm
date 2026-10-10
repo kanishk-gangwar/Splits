@@ -1,0 +1,9 @@
+-- Schema version 1 -> 2. SQLDelight derives the database version from the highest numbered
+-- migration here plus one, and the platform drivers run these on upgrade; a fresh install just
+-- runs the CREATE TABLEs in Splits.sq, so every column added there must be added here too.
+--
+-- Existing rows get the defaults: every group keeps the fewest-payments settle-up it already
+-- had, and expenses from before entries recorded who added them stay ownerless (the payer
+-- stands in — see GroupDetail.canEditExpense).
+ALTER TABLE groupEntity ADD COLUMN simplifyDebts INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE expenseEntity ADD COLUMN createdByMemberId TEXT;

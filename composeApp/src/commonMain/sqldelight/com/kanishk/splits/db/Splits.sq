@@ -15,7 +15,9 @@ CREATE TABLE groupEntity (
     archived        INTEGER AS Boolean NOT NULL DEFAULT 0,
     hidden          INTEGER AS Boolean NOT NULL DEFAULT 0,
     deleted         INTEGER AS Boolean NOT NULL DEFAULT 0,
-    dirty           INTEGER AS Boolean NOT NULL DEFAULT 1
+    dirty           INTEGER AS Boolean NOT NULL DEFAULT 1,
+    -- Fewest payments (1) or every pairwise debt (0) on the settle-up tab. Admin-only, synced.
+    simplifyDebts   INTEGER AS Boolean NOT NULL DEFAULT 1
 );
 
 CREATE INDEX groupEntity_invite ON groupEntity(inviteCode);
@@ -39,8 +41,8 @@ SELECT * FROM groupEntity WHERE inviteCode = ? AND deleted = 0;
 upsertGroup:
 INSERT OR REPLACE INTO groupEntity(
     id, name, emoji, currencyCode, inviteCode, adminMemberId,
-    createdAt, updatedAt, archived, hidden, deleted, dirty
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    createdAt, updatedAt, archived, hidden, deleted, dirty, simplifyDebts
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- Archiving and hiding are per-device shelf decisions, not facts about the group, so
 -- neither marks the row dirty: they must never propagate to other participants.
@@ -59,6 +61,11 @@ UPDATE groupEntity SET updatedAt = ? WHERE id = ?;
 
 renameGroup:
 UPDATE groupEntity SET name = ?, emoji = ?, currencyCode = ?, updatedAt = ?, dirty = 1 WHERE id = ?;
+
+-- A fact about the group rather than a shelf decision, so unlike archived/hidden it is dirty
+-- and travels. splits_push only lets the admin's device change it.
+setGroupSimplifyDebts:
+UPDATE groupEntity SET simplifyDebts = ?, updatedAt = ?, dirty = 1 WHERE id = ?;
 
 softDeleteGroup:
 UPDATE groupEntity SET deleted = 1, updatedAt = ?, dirty = 1 WHERE id = ?;
@@ -122,6 +129,12 @@ WHERE groupId = ? AND claimedByDeviceId = ?;
 releaseClaimOfMember:
 UPDATE memberEntity SET claimedByDeviceId = NULL, updatedAt = ?, dirty = 1 WHERE id = ?;
 
+-- This install changing which device id it signs as (see SplitsRepository.deviceId). Not dirty
+-- and no timestamp bump: the server has already been told through splits_rotate_device, and
+-- the claim itself has not changed hands.
+rotateClaims:
+UPDATE memberEntity SET claimedByDeviceId = ? WHERE claimedByDeviceId = ?;
+
 softDeleteMember:
 UPDATE memberEntity SET deleted = 1, updatedAt = ?, dirty = 1 WHERE id = ?;
 
@@ -149,7 +162,9 @@ CREATE TABLE expenseEntity (
     createdAt      INTEGER NOT NULL,
     updatedAt      INTEGER NOT NULL,
     deleted        INTEGER AS Boolean NOT NULL DEFAULT 0,
-    dirty          INTEGER AS Boolean NOT NULL DEFAULT 1
+    dirty          INTEGER AS Boolean NOT NULL DEFAULT 1,
+    -- Who added it; a member id. NULL on rows from before entries had an owner.
+    createdByMemberId TEXT
 );
 
 CREATE INDEX expenseEntity_group ON expenseEntity(groupId);
@@ -168,8 +183,8 @@ SELECT * FROM expenseEntity WHERE id = ?;
 upsertExpense:
 INSERT OR REPLACE INTO expenseEntity(
     id, groupId, title, amountMinor, paidByMemberId, kind, categoryId, note,
-    occurredAt, createdAt, updatedAt, deleted, dirty
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    occurredAt, createdAt, updatedAt, deleted, dirty, createdByMemberId
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 softDeleteExpense:
 UPDATE expenseEntity SET deleted = 1, updatedAt = ?, dirty = 1 WHERE id = ?;
