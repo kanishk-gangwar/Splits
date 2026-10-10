@@ -199,6 +199,18 @@ fun ExpenseEditorScreen(
     val creatorName = loadedExpense
         ?.let { current.member(it.createdByMemberId ?: it.paidByMemberId)?.name }
 
+    // Somebody who may not change this entry still gets to see it — it may well be split with
+    // them. They get the details screen instead of a form whose Save and Delete they cannot use.
+    if (loadedExpense != null && (!mayEdit || current.group.archived)) {
+        ExpenseDetailScreen(
+            detail = current,
+            expense = loadedExpense,
+            myMemberId = me?.id,
+            onBack = onBack,
+        )
+        return
+    }
+
     val participants = current.members.filter { selected[it.id] == true }
     val computedSplits = planSplits(
         kind = kind,
@@ -331,11 +343,7 @@ fun ExpenseEditorScreen(
             if (editing && creatorName != null) {
                 item {
                     Text(
-                        text = if (mayEdit) {
-                            "Added by $creatorName."
-                        } else {
-                            "Added by $creatorName. Only they or the group admin can change it."
-                        },
+                        text = "Added by $creatorName.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 4.dp),

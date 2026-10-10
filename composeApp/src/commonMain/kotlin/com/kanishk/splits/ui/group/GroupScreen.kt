@@ -298,14 +298,13 @@ fun GroupScreen(
 
                 expensesTab(
                     detail = current,
-                    deviceId = repository.deviceId,
                     myMemberId = me?.id,
                     filterMemberId = filterMemberId,
                     cutoffMillis = cutoff,
                     loadingMore = loadingMore,
                     hasOlder = hasOlder,
                     readOnly = readOnly,
-                    onEditExpense = onEditExpense,
+                    onOpenExpense = onEditExpense,
                 )
             } else if (tab == 1) {
                 balancesTab(
@@ -599,14 +598,13 @@ private fun IdentityPrompt(onPick: () -> Unit) {
 
 private fun androidx.compose.foundation.lazy.LazyListScope.expensesTab(
     detail: GroupDetail,
-    deviceId: String?,
     myMemberId: String?,
     filterMemberId: String?,
     cutoffMillis: Long,
     loadingMore: Boolean,
     hasOlder: Boolean,
     readOnly: Boolean,
-    onEditExpense: (String) -> Unit,
+    onOpenExpense: (String) -> Unit,
 ) {
     if (detail.expenses.isEmpty()) {
         item {
@@ -657,15 +655,14 @@ private fun androidx.compose.foundation.lazy.LazyListScope.expensesTab(
             )
         }
         items(dayExpenses, key = { it.id }) { expense ->
-            // An entry opens for editing only for whoever added it (or the admin). Everyone
-            // else gets a plain row — there is nothing on the form they would be allowed to
-            // change, so a tap that leads to a disabled Save would only confuse.
-            val editable = !readOnly && detail.canEditExpense(deviceId, expense)
+            // Every row opens. Whoever added it (or the admin) lands on the editor; everyone
+            // else — and everyone, once the group is archived — lands on a read-only details
+            // screen. The editor makes that call, so a stale back stack is covered too.
             ExpenseRow(
                 expense = expense,
                 detail = detail,
                 myMemberId = myMemberId,
-                onClick = if (editable) ({ onEditExpense(expense.id) }) else null,
+                onClick = { onOpenExpense(expense.id) },
             )
         }
     }
