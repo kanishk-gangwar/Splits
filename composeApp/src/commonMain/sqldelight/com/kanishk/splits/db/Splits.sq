@@ -164,7 +164,10 @@ CREATE TABLE expenseEntity (
     deleted        INTEGER AS Boolean NOT NULL DEFAULT 0,
     dirty          INTEGER AS Boolean NOT NULL DEFAULT 1,
     -- Who added it; a member id. NULL on rows from before entries had an owner.
-    createdByMemberId TEXT
+    createdByMemberId TEXT,
+    -- JSON list of {member_id, paid_minor} when several people paid; NULL when paidByMemberId
+    -- paid it all. Must stay the last column: 2.sqm appends it to existing tables.
+    payers         TEXT
 );
 
 CREATE INDEX expenseEntity_group ON expenseEntity(groupId);
@@ -183,8 +186,8 @@ SELECT * FROM expenseEntity WHERE id = ?;
 upsertExpense:
 INSERT OR REPLACE INTO expenseEntity(
     id, groupId, title, amountMinor, paidByMemberId, kind, categoryId, note,
-    occurredAt, createdAt, updatedAt, deleted, dirty, createdByMemberId
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    occurredAt, createdAt, updatedAt, deleted, dirty, createdByMemberId, payers
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 softDeleteExpense:
 UPDATE expenseEntity SET deleted = 1, updatedAt = ?, dirty = 1 WHERE id = ?;

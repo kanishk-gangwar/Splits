@@ -72,8 +72,13 @@ create table if not exists public.splits_shares (
 --   created_by_member_id  the member who added an entry. Stamped by splits_push from the
 --                         pushing device's own claim, never from the payload, and frozen after
 --                         that — it is what decides who may edit or delete the entry.
+--   payers                [{member_id, paid_minor}, ...] when more than one person paid;
+--                         null when paid_by_member_id paid the whole amount. Apps older
+--                         than 1.8.0 ignore it and treat paid_by_member_id (the biggest
+--                         contributor) as the only payer.
 alter table public.splits_groups   add column if not exists simplify_debts boolean not null default true;
 alter table public.splits_expenses add column if not exists created_by_member_id text;
+alter table public.splits_expenses add column if not exists payers jsonb;
 
 create index if not exists splits_members_group    on public.splits_members(group_id);
 create index if not exists splits_expenses_group   on public.splits_expenses(group_id);
@@ -116,6 +121,14 @@ begin
     if not exists (select 1 from pg_constraint where conname = 'splits_expenses_creator_sane') then
         alter table public.splits_expenses add constraint splits_expenses_creator_sane check (
             created_by_member_id is null or length(created_by_member_id) <= 64
+        );
+    end if;
+
+    if not exists (select 1 from pg_constraint where conname = 'splits_expenses_payers_sane') then
+        alter table public.splits_expenses add constraint splits_expenses_payers_sane check (
+            payers is null
+            or (jsonb_typeof(payers) = 'array' and jsonb_array_length(payers) <= 200
+                and length(payers::text) <= 20000)
         );
     end if;
 
@@ -336,6 +349,7 @@ begin
                 'amount_minor', e.amount_minor, 'paid_by_member_id', e.paid_by_member_id,
                 'kind', e.kind, 'category_id', e.category_id, 'note', e.note,
                 'occurred_at', e.occurred_at, 'created_by_member_id', e.created_by_member_id,
+                'payers', e.payers,
                 'created_at', e.created_at, 'updated_at', e.updated_at, 'deleted', e.deleted
             ))
             from public.splits_expenses e
@@ -605,7 +619,7 @@ begin
         insert into public.splits_expenses (
             id, group_id, title, amount_minor, paid_by_member_id, kind,
             category_id, note, occurred_at, created_at, updated_at, deleted,
-            created_by_member_id
+            created_by_member_id, payers
         )
         select
             e->>'id', e->>'group_id', e->>'title',
@@ -616,7 +630,8 @@ begin
             least((e->>'updated_at')::bigint, v_max_ts),
             coalesce((e->>'deleted')::boolean, false),
             -- Whoever this device *is* in the group, not whoever the payload claims.
-            public.splits_member_of(e->>'group_id', v_device)
+            public.splits_member_of(e->>'group_id', v_device),
+            case when jsonb_typeof(e->'payers') = 'array' then e->'payers' end
         from jsonb_array_elements(coalesce(p_payload->'expenses', '[]'::jsonb)) as e
         -- A device with no name in the group writes nothing: neither new rows nor edits.
         where public.splits_member_of(e->>'group_id', v_device) is not null
@@ -629,7 +644,8 @@ begin
             note              = excluded.note,
             occurred_at       = excluded.occurred_at,
             updated_at        = excluded.updated_at,
-            deleted           = excluded.deleted
+            deleted           = excluded.deleted,
+            payers            = excluded.payers
             -- created_by_member_id is deliberately absent: the owner of an entry is fixed.
         where excluded.updated_at >= public.splits_expenses.updated_at
           -- Creator or admin only. A null owner is a row from before entries had one.

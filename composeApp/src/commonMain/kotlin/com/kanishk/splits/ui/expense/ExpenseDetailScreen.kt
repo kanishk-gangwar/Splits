@@ -140,7 +140,7 @@ fun ExpenseDetailScreen(
                     }
                 }
             } else {
-                item {
+                if (!expense.hasMultiplePayers) item {
                     SplitsCard(Modifier.fillMaxWidth()) {
                         Row(
                             Modifier.padding(16.dp),
@@ -157,6 +157,39 @@ fun ExpenseDetailScreen(
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
+                        }
+                    }
+                }
+
+                if (expense.hasMultiplePayers) {
+                    item { SectionLabel("Paid by ${expense.payers.size}") }
+                    items(expense.payers, key = { "paid-" + it.memberId }) { payment ->
+                        val member = detail.member(payment.memberId)
+                        SplitsCard(Modifier.fillMaxWidth()) {
+                            Row(
+                                Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Avatar(
+                                    member?.name ?: "?",
+                                    member?.colorIndex ?: 0,
+                                    size = 32.dp,
+                                    ring = payment.memberId == myMemberId,
+                                )
+                                Text(
+                                    nameOf(member),
+                                    modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                MoneyText(
+                                    amountMinor = payment.paidMinor,
+                                    currencyCode = currency,
+                                    fontSize = 15.sp,
+                                )
+                            }
                         }
                     }
                 }

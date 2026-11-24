@@ -709,8 +709,7 @@ private fun ExpenseRow(
 
     // What this row did to *your* position, stated plainly.
     val myShare = expense.shareOf(myMemberId.orEmpty())
-    val iPaid = myMemberId != null && expense.paidByMemberId == myMemberId
-    val myDelta = (if (iPaid) expense.amountMinor else 0L) - myShare
+    val myDelta = (if (myMemberId != null) expense.paidBy(myMemberId) else 0L) - myShare
 
     SplitsCard(Modifier.fillMaxWidth(), onClick = onClick) {
         Row(
@@ -739,7 +738,12 @@ private fun ExpenseRow(
                         val to = detail.member(expense.paidToMemberId)
                         "${payer?.name ?: "Someone"} paid ${to?.name ?: "someone"}"
                     } else {
-                        "${payer?.name ?: "Someone"} paid ${formatMinor(expense.amountMinor, currency)}"
+                        val payerLabel = if (expense.hasMultiplePayers) {
+                            "${expense.payers.size} people"
+                        } else {
+                            payer?.name ?: "Someone"
+                        }
+                        "$payerLabel paid ${formatMinor(expense.amountMinor, currency)}"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

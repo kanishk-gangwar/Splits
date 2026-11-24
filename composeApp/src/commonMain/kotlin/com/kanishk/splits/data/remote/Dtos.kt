@@ -63,6 +63,17 @@ data class RemoteExpense(
      * member the pushing device actually holds, and never lets an edit change it.
      */
     @SerialName("created_by_member_id") val createdByMemberId: String? = null,
+    /**
+     * Set only when several people paid; null means [paidByMemberId] paid it all. Older apps
+     * ignore the field and see the biggest contributor as the sole payer.
+     */
+    val payers: List<RemotePayer>? = null,
+)
+
+@Serializable
+data class RemotePayer(
+    @SerialName("member_id") val memberId: String,
+    @SerialName("paid_minor") val paidMinor: Long,
 )
 
 @Serializable

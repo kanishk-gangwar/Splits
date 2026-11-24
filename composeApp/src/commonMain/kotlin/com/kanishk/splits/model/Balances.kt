@@ -88,22 +88,37 @@ fun summarise(members: List<Member>, expenses: List<Expense>): GroupSummary {
     var totalSpent = 0L
 
     for (expense in expenses) {
+        val contributions = expense.contributions
         if (expense.kind == ExpenseKind.EXPENSE) {
             totalSpent += expense.amountMinor
-            paid[expense.paidByMemberId] = (paid[expense.paidByMemberId] ?: 0L) + expense.amountMinor
+            for (payment in contributions) {
+                paid[payment.memberId] = (paid[payment.memberId] ?: 0L) + payment.paidMinor
+            }
             for (split in expense.splits) {
                 spent[split.memberId] = (spent[split.memberId] ?: 0L) + split.shareMinor
             }
         }
-        net[expense.paidByMemberId] = (net[expense.paidByMemberId] ?: 0L) + expense.amountMinor
+        for (payment in contributions) {
+            net[payment.memberId] = (net[payment.memberId] ?: 0L) + payment.paidMinor
+        }
         for (split in expense.splits) {
             net[split.memberId] = (net[split.memberId] ?: 0L) - split.shareMinor
-            // Your own share of something you paid for is not a debt to anyone. A settlement
-            // lands here too: A paying B is a share of B's that A fronted, which is exactly a
-            // debt from B to A and cancels what B owed.
-            if (split.memberId != expense.paidByMemberId && split.shareMinor != 0L) {
-                val key = split.memberId to expense.paidByMemberId
-                pairDebts[key] = (pairDebts[key] ?: 0L) + split.shareMinor
+        }
+        // With several payers, each share is owed to them in proportion to what they put in.
+        // Your own share of something you paid for is not a debt to anyone. A settlement lands
+        // here too: A paying B is a share of B's that A fronted, which is exactly a debt from B
+        // to A and cancels what B owed.
+        val owed = allocateShares(
+            shares = expense.splits.map { it.shareMinor },
+            paid = contributions.map { it.paidMinor },
+        )
+        expense.splits.forEachIndexed { row, split ->
+            contributions.forEachIndexed { column, payment ->
+                val amount = owed[row][column]
+                if (split.memberId != payment.memberId && amount != 0L) {
+                    val key = split.memberId to payment.memberId
+                    pairDebts[key] = (pairDebts[key] ?: 0L) + amount
+                }
             }
         }
     }
@@ -276,4 +291,86 @@ data class OverallPosition(
     val isEmpty: Boolean get() = byCurrency.values.all { it == 0L }
     val owedToYou: Map<String, Long> get() = byCurrency.filterValues { it > 0 }
     val youOwe: Map<String, Long> get() = byCurrency.filterValues { it < 0 }.mapValues { -it.value }
+}
+
+/**
+ * Splits [amount] across [weights] in proportion, in whole minor units, with the rounding
+ * leftovers going to the largest remainders so the parts always add back up to [amount].
+ */
+/**
+ * Who owes which payer how much: a table with a row per share and a column per payment, each
+ * cell proportional to share × payment / total, in whole minor units.
+ *
+ * Rounding each row on its own keeps the rows right but can leave a payer's column a unit
+ * off what they paid, and then the pairwise debts no longer add up to the balances. So the
+ * cells are floored, and the leftover units handed out where both the row and the column are
+ * still short — largest fractions first, then whatever pairing remains.
+ *
+ * When the two sides do not add up to the same total (a malformed row from sync), each share
+ * is simply spread across the payers on its own.
+ */
+internal fun allocateShares(shares: List<Long>, paid: List<Long>): List<List<Long>> {
+    if (paid.size <= 1 || shares.sum() != paid.sum() || paid.any { it < 0 } || shares.any { it < 0 }) {
+        return shares.map { allocateProportionally(it, paid) }
+    }
+    val total = paid.sum()
+    if (total == 0L) return shares.map { List(paid.size) { 0L } }
+
+    val exact = shares.all { it <= EXACT_LIMIT } && paid.all { it <= EXACT_LIMIT }
+    val cells = shares.map { share ->
+        paid.map { p -> if (exact) share * p / total else (share.toDouble() * p / total).toLong() }
+            .toMutableList()
+    }
+    val rowNeed = shares.indices.map { shares[it] - cells[it].sum() }.toMutableList()
+    val columnNeed = paid.indices.map { col -> paid[col] - shares.indices.sumOf { cells[it][col] } }
+        .toMutableList()
+
+    val byFraction = shares.indices.flatMap { row -> paid.indices.map { col -> row to col } }
+        .sortedByDescending { (row, col) -> if (exact) (shares[row] * paid[col]) % total else 0L }
+    for ((row, col) in byFraction) {
+        if (rowNeed[row] > 0 && columnNeed[col] > 0) {
+            cells[row][col] += 1
+            rowNeed[row] -= 1
+            columnNeed[col] -= 1
+        }
+    }
+    // Anything still short: pair the remaining row and column needs up in order. Both sides
+    // need the same amount in total, so this always finishes.
+    var col = 0
+    for (row in shares.indices) {
+        while (rowNeed[row] > 0) {
+            while (columnNeed[col] == 0L) col++
+            val step = minOf(rowNeed[row], columnNeed[col])
+            cells[row][col] += step
+            rowNeed[row] -= step
+            columnNeed[col] -= step
+        }
+    }
+    return cells
+}
+
+private const val EXACT_LIMIT = 3_000_000_000L
+
+internal fun allocateProportionally(amount: Long, weights: List<Long>): List<Long> {
+    if (weights.isEmpty()) return emptyList()
+    val total = weights.sum()
+    if (total <= 0L) return weights.mapIndexed { i, _ -> if (i == 0) amount else 0L }
+    if (weights.size == 1) return listOf(amount)
+    // amount * weight stays exact in a Long up to ~3e9 each (₹3 crore in paise); beyond that
+    // fall back to doubles, where being a paisa out is the lesser evil next to overflowing.
+    val exact = amount <= EXACT_LIMIT && weights.all { it <= EXACT_LIMIT }
+    val base = weights.map {
+        if (exact) amount * it / total else (amount.toDouble() * it / total).toLong()
+    }
+    var leftover = amount - base.sum()
+    val result = base.toMutableList()
+    val byRemainder = weights.indices.sortedByDescending {
+        if (exact) (amount * weights[it]) % total else 0L
+    }
+    for (index in byRemainder) {
+        if (leftover == 0L) break
+        result[index] += 1
+        leftover -= 1
+    }
+    return result
 }

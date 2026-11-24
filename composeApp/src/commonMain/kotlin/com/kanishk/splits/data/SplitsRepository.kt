@@ -12,6 +12,7 @@ import com.kanishk.splits.data.remote.PushPayload
 import com.kanishk.splits.data.remote.RemoteExpense
 import com.kanishk.splits.data.remote.RemoteGroup
 import com.kanishk.splits.data.remote.RemoteMember
+import com.kanishk.splits.data.remote.RemotePayer
 import com.kanishk.splits.data.remote.RemoteShare
 import com.kanishk.splits.data.remote.RemoteSnapshot
 import com.kanishk.splits.db.SplitsDatabase
@@ -22,6 +23,7 @@ import com.kanishk.splits.model.GroupCard
 import com.kanishk.splits.model.GroupDetail
 import com.kanishk.splits.model.Member
 import com.kanishk.splits.model.OverallPosition
+import com.kanishk.splits.model.Payment
 import com.kanishk.splits.model.Split
 import com.kanishk.splits.model.nowMillis
 import com.kanishk.splits.model.summarise
@@ -32,6 +34,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 
 private const val PREF_DEVICE_ID = "device_id"
 private const val PREF_DISPLAY_NAME = "display_name"
@@ -324,7 +327,7 @@ class SplitsRepository(
     suspend fun removeMember(groupId: String, memberId: String): Boolean = withContext(dispatcher) {
         val expenses = queries.selectExpensesOfGroup(groupId).executeAsList()
         val splits = queries.selectSplitsOfGroup(groupId).executeAsList()
-        val referenced = expenses.any { it.paidByMemberId == memberId } ||
+        val referenced = expenses.any { it.paidByMemberId == memberId || memberId in payerIds(it.payers) } ||
             splits.any { it.memberId == memberId }
         if (referenced) return@withContext false
         queries.softDeleteMember(nowMillis(), memberId)
@@ -359,6 +362,7 @@ class SplitsRepository(
         splits: List<Split>,
         preferredId: String? = null,
         createdByMemberId: String? = null,
+        payers: List<Payment> = emptyList(),
     ): String = withContext(dispatcher) {
         val now = nowMillis()
         val unusedPreferredId = preferredId
@@ -384,6 +388,7 @@ class SplitsRepository(
                 deleted = false,
                 dirty = true,
                 createdByMemberId = creator,
+                payers = encodePayers(payers.filter { it.paidMinor != 0L }),
             )
             queries.deleteSplitsOfExpense(id)
             splits.filter { it.shareMinor != 0L }.forEach { split ->
@@ -514,6 +519,8 @@ class SplitsRepository(
                     updatedAt = row.updatedAt,
                     deleted = row.deleted,
                     createdByMemberId = row.createdByMemberId,
+                    payers = decodePayers(row.payers).takeIf { it.isNotEmpty() }
+                        ?.map { RemotePayer(it.memberId, it.paidMinor) },
                 )
             },
             // Shares ride along with their expense; the server replaces the whole set.
@@ -643,6 +650,7 @@ class SplitsRepository(
                     deleted = remote.deleted,
                     dirty = false,
                     createdByMemberId = remote.createdByMemberId,
+                    payers = encodePayers(remote.payers.orEmpty().map { Payment(it.memberId, it.paidMinor) }),
                 )
                 // Replace the share set wholesale — an edit may have dropped a participant.
                 queries.deleteSplitsOfExpense(remote.id)
@@ -838,4 +846,19 @@ private fun ExpenseEntity.toModel(splits: List<SplitEntity>) = Expense(
     updatedAt = updatedAt,
     splits = splits.map { Split(it.memberId, it.shareMinor) },
     createdByMemberId = createdByMemberId,
+    payers = decodePayers(payers),
 )
+
+private val PayersJson = Json { ignoreUnknownKeys = true }
+
+/** Null for the single-payer case, so those rows stay exactly as they always were. */
+private fun encodePayers(payers: List<Payment>): String? =
+    if (payers.size < 2) null
+    else PayersJson.encodeToString(payers.map { RemotePayer(it.memberId, it.paidMinor) })
+
+private fun decodePayers(raw: String?): List<Payment> =
+    if (raw.isNullOrBlank()) emptyList()
+    else runCatching { PayersJson.decodeFromString<List<RemotePayer>>(raw) }.getOrDefault(emptyList())
+        .map { Payment(it.memberId, it.paidMinor) }
+
+private fun payerIds(raw: String?): List<String> = decodePayers(raw).map { it.memberId }

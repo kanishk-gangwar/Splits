@@ -65,6 +65,7 @@ import com.kanishk.splits.model.Expense
 import com.kanishk.splits.model.ExpenseKind
 import com.kanishk.splits.model.GroupDetail
 import com.kanishk.splits.model.Member
+import com.kanishk.splits.model.Payment
 import com.kanishk.splits.model.FULL_PERCENT
 import com.kanishk.splits.model.Split
 import com.kanishk.splits.model.SplitMode
@@ -125,6 +126,13 @@ fun ExpenseEditorScreen(
     // never changes this — bouncing through it must not lose what was typed in Exact.
     var shareUnit by remember { mutableStateOf(SplitMode.Exact) }
 
+    // Several people paying. Off by default: one payer is still the common case, and the
+    // single "Paid by" row stays the quick path for it.
+    var multiPayer by remember { mutableStateOf(false) }
+    var payerMode by remember { mutableStateOf(SplitMode.Equally) }
+    val payerSelected = remember { mutableStateMapOf<String, Boolean>() }
+    val payerText = remember { mutableStateMapOf<String, String>() }
+
     var showPaidByPicker by remember { mutableStateOf(false) }
     var showPaidToPicker by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
@@ -155,6 +163,15 @@ fun ExpenseEditorScreen(
             // Uneven shares mean this was not an equal split.
             val distinct = loadedExpense.splits.map { it.shareMinor }.distinct()
             if (distinct.size > 1) splitMode = SplitMode.Exact
+            if (loadedExpense.hasMultiplePayers) {
+                multiPayer = true
+                loadedExpense.payers.forEach { payment ->
+                    payerSelected[payment.memberId] = true
+                    payerText[payment.memberId] = minorToEditText(payment.paidMinor)
+                }
+                val payerAmounts = loadedExpense.payers.map { it.paidMinor }.distinct()
+                payerMode = if (payerAmounts.size > 1) SplitMode.Exact else SplitMode.Equally
+            }
         }
         loaded = true
     }
@@ -223,19 +240,39 @@ fun ExpenseEditorScreen(
     val splitTotal = computedSplits.sumOf { it.shareMinor }
     val splitBalanced = splitTotal == amountMinor
 
+    val usingMultiPayer = multiPayer && !isReimbursement
+    val computedPayers: List<Payment> = if (usingMultiPayer) {
+        planSplits(
+            kind = ExpenseKind.EXPENSE,
+            amountMinor = amountMinor,
+            participantIds = current.members.filter { payerSelected[it.id] == true }.map { it.id },
+            paidToMemberId = null,
+            mode = payerMode,
+            typed = payerText,
+        ).map { Payment(it.memberId, it.shareMinor) }.filter { it.paidMinor != 0L }
+    } else {
+        emptyList()
+    }
+    val payerTotal = computedPayers.sumOf { it.paidMinor }
+    val payersBalanced = !usingMultiPayer || (computedPayers.isNotEmpty() && payerTotal == amountMinor)
+    // The payer of record: the only one for a single payer, the biggest contributor otherwise.
+    // Older app versions only know this one field, so it should be the most sensible name.
+    val recordPayer = if (usingMultiPayer) computedPayers.maxByOrNull { it.paidMinor }?.memberId else paidBy
+
     // Last line of defence: the group screen already hides every route in here when the group
     // is archived, but a stale back stack could still land someone on this form.
     val canSave = !current.group.archived &&
         me != null &&
         mayEdit &&
         amountMinor > 0 &&
-        paidBy != null &&
+        recordPayer != null &&
+        payersBalanced &&
         computedSplits.isNotEmpty() &&
         splitBalanced &&
         (!isReimbursement || (paidTo != null && paidTo != paidBy))
 
     fun save() {
-        val payer = paidBy ?: return
+        val payer = recordPayer ?: return
         val resolvedTitle = when {
             title.isNotBlank() -> title
             isReimbursement -> {
@@ -268,6 +305,8 @@ fun ExpenseEditorScreen(
                 splits = computedSplits,
                 preferredId = preferredId,
                 createdByMemberId = me?.id,
+                // A "multiple payers" list that ends up as one person is just a single payer.
+                payers = if (computedPayers.size > 1) computedPayers else emptyList(),
             )
             onDone()
         }
@@ -410,12 +449,54 @@ fun ExpenseEditorScreen(
                     )
                 }
 
-                item {
-                    PickerRow(
-                        label = "Paid by",
-                        value = current.member(paidBy)?.name ?: "Choose",
-                        onClick = { showPaidByPicker = true },
-                    )
+                if (usingMultiPayer) {
+                    item {
+                        SplitSection(
+                            detail = current,
+                            selected = payerSelected,
+                            shareText = payerText,
+                            splitMode = payerMode,
+                            onModeChange = { payerMode = it },
+                            amountMinor = amountMinor,
+                            computedSplits = computedPayers.map { Split(it.memberId, it.paidMinor) },
+                            balanced = payersBalanced,
+                            splitTotal = payerTotal,
+                            modes = listOf(SplitMode.Equally, SplitMode.Exact),
+                            exactHint = "Type what each person paid. Anyone left blank covers an even part of the rest.",
+                            shortfallLabel = "not paid by anyone yet",
+                            header = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(Modifier.weight(1f)) { SectionLabel("Paid by") }
+                                    TextButton(onClick = {
+                                        // Back to one payer: the biggest contributor so far.
+                                        paidBy = recordPayer ?: paidBy
+                                        multiPayer = false
+                                    }) { Text("One person paid") }
+                                }
+                            },
+                        )
+                    }
+                } else {
+                    item {
+                        Column {
+                            PickerRow(
+                                label = "Paid by",
+                                value = current.member(paidBy)?.name ?: "Choose",
+                                onClick = { showPaidByPicker = true },
+                            )
+                            TextButton(
+                                onClick = {
+                                    // Start from the current payer plus nobody else ticked — the
+                                    // user adds whoever chipped in.
+                                    if (payerSelected.none { it.value }) {
+                                        paidBy?.let { payerSelected[it] = true }
+                                    }
+                                    multiPayer = true
+                                },
+                                modifier = Modifier.padding(top = 2.dp),
+                            ) { Text("More than one person paid") }
+                        }
+                    }
                 }
 
                 item {
@@ -832,21 +913,26 @@ private fun SplitSection(
     computedSplits: List<Split>,
     balanced: Boolean,
     splitTotal: Long,
+    label: String = "Split",
+    modes: List<SplitMode> = SplitMode.entries,
+    exactHint: String = "Type an amount for anyone you want to fix. The rest is shared evenly across the others.",
+    shortfallLabel: String = "still unassigned",
+    header: @Composable () -> Unit = { SectionLabel(label) },
 ) {
     val currency = detail.group.currencyCode
 
     Column {
-        SectionLabel("Split")
+        header()
         VSpace(10.dp)
         SegmentedControl(
-            options = listOf("Equally", "Exact", "Percent"),
-            selectedIndex = splitMode.ordinal,
+            options = modes.map { it.name },
+            selectedIndex = modes.indexOf(splitMode).coerceAtLeast(0),
             onSelect = { index ->
                 // Untouched fields stay empty on purpose. An empty row is an *automatic* row
                 // that shows its computed share as a placeholder; pre-filling every row would
                 // make them all look hand-entered and defeat the redistribution. Rows that were
                 // pinned do carry over, restated in the new mode's units — see the caller.
-                onModeChange(SplitMode.entries[index])
+                onModeChange(modes[index])
             },
             modifier = Modifier.fillMaxWidth(),
         )
@@ -855,7 +941,7 @@ private fun SplitSection(
             VSpace(8.dp)
             Text(
                 text = if (splitMode == SplitMode.Exact) {
-                    "Type an amount for anyone you want to fix. The rest is shared evenly across the others."
+                    exactHint
                 } else {
                     "Type a percentage for anyone you want to fix. The remainder is split across the others."
                 },
@@ -956,7 +1042,7 @@ private fun SplitSection(
             val difference = amountMinor - splitTotal
             Text(
                 text = if (difference > 0) {
-                    "${formatMinor(difference, currency)} still unassigned"
+                    "${formatMinor(difference, currency)} $shortfallLabel"
                 } else {
                     "${formatMinor(-difference, currency)} over the total"
                 },

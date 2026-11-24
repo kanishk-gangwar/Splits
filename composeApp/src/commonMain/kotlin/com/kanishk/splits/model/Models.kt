@@ -53,6 +53,12 @@ data class Split(
     val shareMinor: Long,
 )
 
+/** How much one member put towards an entry. */
+data class Payment(
+    val memberId: String,
+    val paidMinor: Long,
+)
+
 data class Expense(
     val id: String,
     val groupId: String,
@@ -72,8 +78,24 @@ data class Expense(
      * to the payer in [GroupDetail.canEditExpense].
      */
     val createdByMemberId: String? = null,
+    /**
+     * Who paid, when more than one person did. Empty means [paidByMemberId] paid the whole
+     * [amountMinor] — which is every entry from before multiple payers existed, and still the
+     * usual case. When set, the amounts add up to [amountMinor] and [paidByMemberId] is the
+     * biggest contributor, so an older app that only knows one payer still shows a sensible
+     * name.
+     */
+    val payers: List<Payment> = emptyList(),
 ) {
     val isReimbursement: Boolean get() = kind == ExpenseKind.REIMBURSEMENT
+
+    /** Every contribution towards this entry, whether it had one payer or several. */
+    val contributions: List<Payment>
+        get() = payers.ifEmpty { listOf(Payment(paidByMemberId, amountMinor)) }
+
+    val hasMultiplePayers: Boolean get() = payers.size > 1
+
+    fun paidBy(memberId: String): Long = contributions.filter { it.memberId == memberId }.sumOf { it.paidMinor }
 
     /** For a reimbursement there is exactly one counterparty: the person being paid. */
     val paidToMemberId: String? get() = if (isReimbursement) splits.firstOrNull()?.memberId else null
@@ -185,7 +207,7 @@ data class GroupDetail(
  * one of those would quietly hide half of what someone was involved in.
  */
 fun Expense.involves(memberId: String): Boolean =
-    paidByMemberId == memberId || splits.any { it.memberId == memberId }
+    contributions.any { it.memberId == memberId } || splits.any { it.memberId == memberId }
 
 /** Filters to one member's involvement. A null id means "everyone", i.e. no filtering. */
 fun List<Expense>.involving(memberId: String?): List<Expense> =

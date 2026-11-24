@@ -1,0 +1,5 @@
+-- Schema version 2 -> 3: entries paid for by more than one person.
+--
+-- NULL (every existing row) keeps meaning "paidByMemberId paid the whole amount". See
+-- Expense.payers.
+ALTER TABLE expenseEntity ADD COLUMN payers TEXT;
