@@ -1,5 +1,6 @@
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import java.util.Properties
 
 plugins {
@@ -78,6 +79,52 @@ val generateSupabaseConfig by tasks.registering {
     }
 }
 
+// The web build's wasm optimiser comes from the Binaryen repository declared in
+// settings.gradle.kts; project-level repositories are forbidden there, so stop the plugin
+// adding its own.
+plugins.withType<org.jetbrains.kotlin.gradle.targets.wasm.binaryen.BinaryenPlugin> {
+    the<org.jetbrains.kotlin.gradle.targets.wasm.binaryen.BinaryenEnvSpec>().downloadBaseUrl.set(null as String?)
+}
+
+// Publishes the web app to docs/app, which GitHub Pages serves at
+// https://kanishk-gangwar.github.io/Splits/app/ — commit and push docs/ to deploy. It carries the
+// Supabase config from local.properties like a release APK does, so it refuses to run without it.
+val publishWebApp by tasks.registering(Sync::class) {
+    group = "distribution"
+    description = "Builds the production web app into docs/app for GitHub Pages."
+    dependsOn("wasmJsBrowserDistribution")
+    from(layout.buildDirectory.dir("dist/wasmJs/productionExecutable"))
+    into(rootProject.layout.projectDirectory.dir("docs/app"))
+    exclude("**/*.map", "**/*.LICENSE.txt")
+    val hasServer = supabaseUrl.isNotBlank() && supabaseAnonKey.isNotBlank()
+    doFirst {
+        if (!hasServer) throw GradleException(
+            "publishWebApp needs supabase.url and supabase.anonKey in local.properties."
+        )
+    }
+}
+
+// One version for every platform. Android reads it in defaultConfig; the web build has no
+// manifest to carry it, so it gets a generated constant instead.
+val splitsVersionName = "1.7.1"
+
+val generateWebConfig by tasks.registering {
+    val version = splitsVersionName
+    val outputDir = layout.buildDirectory.dir("generated/webConfig")
+    inputs.property("version", version)
+    outputs.dir(outputDir)
+    doLast {
+        outputDir.get().asFile.resolve("com/kanishk/splits/data").apply { mkdirs() }
+            .resolve("GeneratedWebConfig.kt")
+            .writeText(
+                "package com.kanishk.splits.data\n\n" +
+                    "internal object GeneratedWebConfig {\n" +
+                    "    const val VERSION_NAME: String = \"" + version + "\"\n" +
+                    "}\n"
+            )
+    }
+}
+
 kotlin {
     androidTarget {
         @OptIn(ExperimentalKotlinGradlePluginApi::class)
@@ -96,6 +143,19 @@ kotlin {
             baseName = "ComposeApp"
             isStatic = true
         }
+    }
+
+    // The web build, which is how the app reaches an iPhone without the App Store: open it in
+    // Safari and "Add to Home Screen". Needs WasmGC, i.e. Safari / iOS 18.2 or newer.
+    @OptIn(ExperimentalWasmDsl::class)
+    wasmJs {
+        outputModuleName.set("splits")
+        browser {
+            commonWebpackConfig {
+                outputFileName = "splits.js"
+            }
+        }
+        binaries.executable()
     }
 
     sourceSets {
@@ -141,6 +201,14 @@ kotlin {
             implementation(libs.ktor.client.darwin)
         }
 
+        wasmJsMain {
+            kotlin.srcDir(generateWebConfig)
+        }
+
+        wasmJsMain.dependencies {
+            implementation(libs.ktor.client.js)
+        }
+
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }
@@ -169,7 +237,7 @@ android {
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 21
-        versionName = "1.7.1"
+        versionName = splitsVersionName
     }
 
     packaging {

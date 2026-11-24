@@ -106,11 +106,14 @@
     </div>
 
     <a class="btn btn-primary" id="open" href="#">Open in Splits</a>
+    <a class="btn btn-ghost" id="web" href="../app/">Open in the web app (iPhone)</a>
     <button class="btn btn-ghost" id="copy" type="button">Copy code</button>
 
     <p class="hint">
-      Don't have the app? Install Splits on Android or iOS, then enter the code above from the
-      home screen — no sign-up and no phone number required.
+      Don't have the app? On Android, install Splits; on iPhone, use the web app and add it to
+      your Home Screen (Share → Add to Home Screen). Already added it? Copy the code, open Splits
+      from your Home Screen and join with the code — a link opens in Safari, which keeps its own
+      separate copy of your groups. No sign-up and no phone number required.
     </p>
   </main>
 
@@ -150,12 +153,21 @@
     codeEl.textContent = "—";
     openEl.classList.add("hidden");
     copyEl.classList.add("hidden");
+    document.getElementById("web").classList.add("hidden");
     return;
   }
 
   // Groups of four, same as the app's share sheet — works for 12 and legacy 8 alike.
   codeEl.textContent = code.match(/.{1,4}/g).join(" ");
   openEl.href = "splits://join/" + code;
+  document.getElementById("web").href = "../app/#" + code;
+  // iPhones and iPads cannot install the Android app, so the web app is their main way in.
+  var isApple = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+      (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  if (isApple) {
+    openEl.classList.add("hidden");
+    document.getElementById("web").className = "btn btn-primary";
+  }
 
   copyEl.addEventListener("click", function () {
     navigator.clipboard.writeText(code).then(function () {

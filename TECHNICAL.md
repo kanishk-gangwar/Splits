@@ -9,6 +9,7 @@ put together, and more importantly *why* the awkward bits are the way they are.
 - [Splitting](#splitting)
 - [Balances and settle-up](#balances-and-settle-up)
   - [Recording the same settlement twice](#recording-the-same-settlement-twice)
+  - [Several payers](#several-payers)
 - [Data model](#data-model)
 - [Sync](#sync)
 - [Server security model](#server-security-model)
@@ -21,6 +22,7 @@ put together, and more importantly *why* the awkward bits are the way they are.
 - [Who has joined](#who-has-joined)
 - [UI conventions](#ui-conventions)
 - [Build setup and its sharp edges](#build-setup-and-its-sharp-edges)
+  - [The web build](#the-web-build)
 - [Testing](#testing)
 - [Known gaps](#known-gaps)
 
@@ -281,6 +283,25 @@ Settlements added by hand from the expense editor are unaffected: there is no su
 two devices to agree on, so they keep random ids.
 
 ---
+
+### Several payers
+
+An expense paid by more than one person carries `Expense.payers` — `{memberId, paidMinor}` per
+payer, adding up to the amount. Empty means `paidByMemberId` paid it all, which is every entry
+from before 1.8.0 and still the usual case; code that needs "who put money in" reads
+`Expense.contributions`, which covers both. With several payers, `paidByMemberId` is still set,
+to the biggest contributor, so an older app sees one sensible name instead of nothing.
+
+The list is stored as JSON: `expenseEntity.payers` locally (migration `2.sqm`) and
+`splits_expenses.payers` (jsonb) on the server, null for a single payer.
+
+In the pairwise (non-simplified) settle-up, each share is owed to the payers in proportion to
+what they paid. `allocateShares` rounds that table so every row adds up to its share *and* every
+column to its payment; rounding each share on its own left a payer's debts a paisa off their
+balance.
+
+Older apps ignore the field. Editing a multi-payer entry from one pushes it without `payers`,
+and the server stores that as a single-payer entry — a known cost of an old client, not a bug.
 
 ## Data model
 
@@ -749,6 +770,28 @@ exercised here, and a smaller build that crashes is worse than a larger one that
 it on is a real task with real testing, not a flag flip.
 
 ---
+
+### The web build
+
+`wasmJs` exists so the app can reach iPhones without the App Store: Safari → Add to Home Screen.
+It needs WasmGC (iOS 18.2+); `index.html` checks for it and says so instead of going blank.
+
+- **Database.** SQLDelight's web driver is async-only, which would mean rewriting every query as
+  `suspend` on all platforms. `WebSqlDriver` is a small *synchronous* driver over sql.js (SQLite
+  in WebAssembly, on the main thread), bridged by `sqlite-bridge.js`. The whole database lives in
+  memory; a snapshot goes to IndexedDB 250 ms after each write and when the page is hidden.
+  Schema version is kept in `PRAGMA user_version`, as the native drivers do.
+- **Emoji.** Compose on the web draws its own text and cannot use the system emoji font, so
+  `main.kt` downloads Noto Color Emoji (10 MB, versioned CDN URL) before the first frame. The
+  service worker caches CDN files forever and the app's own files network-first.
+- **Gradle.** `settings.gradle.kts` forbids project repositories, but the Kotlin plugin adds its
+  own for Node.js, Yarn and Binaryen. Those are declared in settings instead and the plugin's
+  `downloadBaseUrl` is set to null (root build for Node/Yarn, `composeApp` for Binaryen).
+
+Run it with `./gradlew :composeApp:wasmJsBrowserDevelopmentRun`; build the deployable site with
+`./gradlew :composeApp:wasmJsBrowserDistribution` (output in
+`composeApp/build/dist/wasmJs/productionExecutable`). Like a release APK, the site needs the
+Supabase lines in `local.properties` or it runs offline-only.
 
 ## Testing
 
