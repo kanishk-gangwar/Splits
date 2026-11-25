@@ -72,6 +72,30 @@
         window.__splitsUnsupported = true;
       }
     })();
+    // A Home Screen app has no console to look at, so a crash would only ever be a blank
+    // screen. Put the error on screen instead, where it can be read and reported.
+    (function () {
+      function show(message) {
+        var box = document.getElementById('crash');
+        if (!box) {
+          box = document.createElement('pre');
+          box.id = 'crash';
+          box.style.cssText = 'position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));' +
+            'z-index:9;margin:0;padding:12px;max-height:40%;overflow:auto;white-space:pre-wrap;' +
+            'font:12px ui-monospace,monospace;color:#fff;background:#b00020;border-radius:8px;' +
+            '-webkit-user-select:text;user-select:text;';
+          document.body.appendChild(box);
+        }
+        box.textContent += (box.textContent ? '\n' : 'Splits hit an error:\n') + message;
+      }
+      window.addEventListener('error', function (e) {
+        show(String(e.message || e.error) + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : ''));
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e.reason;
+        show(String(r && (r.stack || r.message) || r));
+      });
+    })();
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js').catch(function () {});
     }
