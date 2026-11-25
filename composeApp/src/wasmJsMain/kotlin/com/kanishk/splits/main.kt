@@ -88,4 +88,5 @@ private fun takeInviteFromHash(): String? = js(
 
 private fun initSqlite(): Promise<JsAny?> = js("globalThis.splitsSql.init()")
 
-private fun hideSplash(): Unit = js("{ var s = document.getElementById('splash'); if (s) s.remove(); }")
+// The fade-out, and waiting for the intro animation to finish, live in index.html.
+private fun hideSplash(): Unit = js("{ if (globalThis.splitsHideSplash) globalThis.splitsHideSplash(); }")
