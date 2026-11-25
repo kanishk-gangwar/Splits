@@ -97,7 +97,8 @@
       });
     })();
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js').catch(function () {});
+      // updateViaCache 'none': look for a new sw.js on every launch, not from the HTTP cache.
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(function () {});
     }
   </script>
   <script src="sqlite-bridge.js"></script>

@@ -35,8 +35,12 @@ self.addEventListener('fetch', function (event) {
 
   if (url.origin !== self.location.origin) return;
 
+  // 'no-cache' makes the browser check with the server instead of trusting its HTTP cache.
+  // GitHub Pages lets files be cached for 10 minutes, and splits.js keeps its name across
+  // deploys while the .wasm files it loads do not: a cached old splits.js asks for wasm that
+  // a deploy has deleted, and the app hangs on the splash. Unchanged files cost a 304.
   event.respondWith(
-    fetch(request)
+    fetch(request, { cache: 'no-cache' })
       .then(function (response) {
         if (response.ok) {
           var copy = response.clone();
