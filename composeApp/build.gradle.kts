@@ -106,7 +106,7 @@ val publishWebApp by tasks.registering(Sync::class) {
 
 // One version for every platform. Android reads it in defaultConfig; the web build has no
 // manifest to carry it, so it gets a generated constant instead.
-val splitsVersionName = "1.8.0"
+val splitsVersionName = "1.8.1"
 
 val generateWebConfig by tasks.registering {
     val version = splitsVersionName
@@ -237,7 +237,7 @@ android {
         applicationId = "com.kanishk.splits"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 22
+        versionCode = 23
         versionName = splitsVersionName
     }
 
