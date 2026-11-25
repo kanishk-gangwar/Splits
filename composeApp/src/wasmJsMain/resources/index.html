@@ -100,6 +100,11 @@
         box.textContent += (box.textContent ? '\n' : 'Splits hit an error:\n') + message;
       }
       window.addEventListener('error', function (e) {
+        // A bare "Script error." with no file comes from a script we cannot see into: on
+        // iPhone, Safari's own page scripts raise one when the share sheet or page menu opens.
+        // Splits' scripts are same-origin and sql.js is loaded with CORS, so their errors
+        // always carry details; this one carries nothing to report.
+        if (!e.filename && !e.error) return;
         show(String(e.message || e.error) + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : ''));
       });
       window.addEventListener('unhandledrejection', function (e) {

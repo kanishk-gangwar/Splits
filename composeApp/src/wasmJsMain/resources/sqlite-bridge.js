@@ -59,6 +59,9 @@
     return new Promise(function (resolve, reject) {
       var script = document.createElement('script');
       script.src = src;
+      // With CORS, an error inside sql.js reaches window.onerror with its message and stack,
+      // not as an opaque "Script error.". cdnjs allows any origin.
+      script.crossOrigin = 'anonymous';
       script.onload = resolve;
       script.onerror = function () { reject(new Error('Could not load ' + src)); };
       document.head.appendChild(script);

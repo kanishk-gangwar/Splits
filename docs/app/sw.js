@@ -3,12 +3,20 @@
 // Network first, cache as fallback — so a new deploy is picked up on the next launch with a
 // connection, instead of an old cached build sticking around until the cache name changes.
 // Supabase calls are never cached: they are the sync, and stale data there would be wrong.
-var CACHE = 'splits-shell-v1';
+// v2: sql.js is now loaded with CORS, and v1 holds it as an opaque no-CORS response, which a
+// CORS request refuses — so v1 has to go.
+var CACHE = 'splits-shell-v2';
 
 self.addEventListener('install', function () { self.skipWaiting(); });
 
 self.addEventListener('activate', function (event) {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches.keys()
+      .then(function (keys) {
+        return Promise.all(keys.filter(function (k) { return k !== CACHE; }).map(function (k) { return caches.delete(k); }));
+      })
+      .then(function () { return self.clients.claim(); })
+  );
 });
 
 self.addEventListener('fetch', function (event) {
