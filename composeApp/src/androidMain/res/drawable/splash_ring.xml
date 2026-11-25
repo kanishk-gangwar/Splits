@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The system launch screen's icon: the launcher icon's ring, but whole (halves joined, no
+  divider). It is the first frame of SplitsSplash, which takes over from it and plays the split,
+  so this geometry has to stay in step with SplitsSplash.kt.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#7C5CFF"
+        android:pathData="M54,30 A24,24 0 0 0 54,78 L54,66 A12,12 0 0 1 54,42 Z" />
+    <path
+        android:fillColor="#31D0AA"
+        android:pathData="M54,30 A24,24 0 0 1 54,78 L54,66 A12,12 0 0 0 54,42 Z" />
+</vector>

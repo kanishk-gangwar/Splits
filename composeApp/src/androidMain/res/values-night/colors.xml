@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches SplitsSplash's dark background, so the hand-over has no seam. -->
+    <color name="splash_background">#121212</color>
+</resources>

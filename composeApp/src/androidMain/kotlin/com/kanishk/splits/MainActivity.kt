@@ -9,6 +9,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.kanishk.splits.ui.SplitsSplash
 
 class MainActivity : ComponentActivity() {
 
@@ -17,12 +26,23 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* silence is fine */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Android's launch screen shows the whole ring (Theme.Splits.Starting); SplitsSplash
+        // takes over from that exact frame and plays the split over the first screen.
+        installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         // A cold start from a tapped invite link arrives here.
         DeepLinks.offer(intent?.dataString)
         askForNotificationsIfNeeded()
-        setContent { App() }
+        // Only on a fresh start; not when the Activity is recreated with state.
+        val playSplash = savedInstanceState == null
+        setContent {
+            var showSplash by rememberSaveable { mutableStateOf(playSplash) }
+            Box(Modifier.fillMaxSize()) {
+                App()
+                if (showSplash) SplitsSplash(onFinished = { showSplash = false })
+            }
+        }
     }
 
     // A warm start (app already running) arrives here instead.

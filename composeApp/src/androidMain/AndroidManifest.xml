@@ -19,7 +19,7 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|fontScale"
             android:windowSoftInputMode="adjustResize"
             android:label="Splits"
-            android:theme="@style/Theme.Splits">
+            android:theme="@style/Theme.Splits.Starting">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
