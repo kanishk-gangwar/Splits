@@ -72,6 +72,17 @@
         window.__splitsUnsupported = true;
       }
     })();
+    // Safari on iPhone draws nothing without this: Compose renders every frame into its WebGL
+    // canvas (the pixels are there), but with Safari's own requestAnimationFrame those frames
+    // never reach the screen, leaving the page blank after the splash. Calling Compose's
+    // callback from a plain JS function instead makes Safari present them. Found by bisecting
+    // in the iOS simulator; harmless everywhere else.
+    (function () {
+      var raf = window.requestAnimationFrame.bind(window);
+      window.requestAnimationFrame = function (callback) {
+        return raf(function (time) { callback(time); });
+      };
+    })();
     // A Home Screen app has no console to look at, so a crash would only ever be a blank
     // screen. Put the error on screen instead, where it can be read and reported.
     (function () {
